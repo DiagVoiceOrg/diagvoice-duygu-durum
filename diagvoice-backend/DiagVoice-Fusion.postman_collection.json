@@ -1,0 +1,224 @@
+{
+  "info": {
+    "_postman_id": "c8d67069-f846-4f7f-a1d2-3fa229056d59",
+    "name": "DiagVoice Fusion Service",
+    "description": "Fusion servisinin tum endpointlerini iceren Postman koleksiyonu.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health / Root",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/"
+      }
+    },
+    {
+      "name": "Analyze Fused",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-fused",
+        "description": "Tum pipeline sonucunu tek cevabta donduren endpoint."
+      }
+    },
+    {
+      "name": "Analyze Depression",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-depression"
+      }
+    },
+    {
+      "name": "Analyze Voice To Text",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-voice-to-text"
+      }
+    },
+    {
+      "name": "Analyze Text Sentiment",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Bugun kendimi iyi hissediyorum\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/analyze-text-sentiment"
+      }
+    },
+    {
+      "name": "Analyze Voice Sentiment",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-voice-sentiment"
+      }
+    },
+    {
+      "name": "Analyze Disease",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-disease"
+      }
+    },
+    {
+      "name": "Analyze Mental Fitness",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-mental-fitness"
+      }
+    },
+    {
+      "name": "Analyze Age Gender",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-age-gender"
+      }
+    },
+    {
+      "name": "Analyze Text Audio Fusion",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "text",
+              "type": "text",
+              "value": "Kendimi biraz yorgun ama iyi hissediyorum."
+            },
+            {
+              "key": "fusion_mode",
+              "type": "text",
+              "value": "dynamic"
+            },
+            {
+              "key": "audio",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-text-audio-fusion"
+      }
+    },
+    {
+      "name": "Analyze Benchmark V2",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "transcript",
+              "type": "text",
+              "value": ""
+            },
+            {
+              "key": "file",
+              "type": "file",
+              "src": ""
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/analyze-benchmark-v2"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://apidiagvoice.huseyinalav.me"
+    }
+  ]
+}

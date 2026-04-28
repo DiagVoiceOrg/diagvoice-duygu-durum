@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 import fastapi
 import httpx
 import uvicorn
-from fastapi import File, HTTPException, UploadFile
+from fastapi import Body, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -185,6 +185,70 @@ def fuse(valence_text: Optional[float], valence_audio: Optional[float], w_text: 
     return {"valence": v, "label": label, "w_text": w}
 
 
+def _build_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        HTTPX_TOTAL_TIMEOUT_SEC,
+        connect=HTTPX_CONNECT_TIMEOUT_SEC,
+        read=HTTPX_READ_TIMEOUT_SEC,
+    )
+
+
+async def _proxy_file_upload(
+    upstream_url: str,
+    file: UploadFile,
+    *,
+    file_field_name: str = "file",
+    extra_form_data: Optional[Dict[str, str]] = None,
+) -> JSONResponse:
+    tmp_path: Optional[str] = None
+    try:
+        suffix = ""
+        if file.filename:
+            safe = file.filename.replace("/", "_").replace("\\", "_")
+            suffix = f"_{safe}"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+
+        async with httpx.AsyncClient(timeout=_build_timeout()) as client:
+            with open(tmp_path, "rb") as f:
+                files = {
+                    file_field_name: (
+                        file.filename or "audio",
+                        f,
+                        file.content_type or "application/octet-stream",
+                    )
+                }
+                r = await client.post(upstream_url, files=files, data=extra_form_data)
+
+        try:
+            body = r.json()
+        except Exception:
+            body = {"detail": r.text or "Upstream returned non-JSON"}
+        return JSONResponse(status_code=r.status_code, content=body)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONResponse:
+    async with httpx.AsyncClient(timeout=_build_timeout()) as client:
+        r = await client.post(upstream_url, json=payload)
+
+    try:
+        body = r.json()
+    except Exception:
+        body = {"detail": r.text or "Upstream returned non-JSON"}
+    return JSONResponse(status_code=r.status_code, content=body)
+
+
 @app.get("/")
 async def root():
     return {
@@ -201,6 +265,14 @@ async def root():
         },
         "proxy": {
             "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+            "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+            "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+            "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+            "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+            "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+            "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+            "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+            "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
             "benchmark_v2": (
                 f"POST {INFERENCE_API_URL}/predict (internal) — field 'audio', form 'transcript'"
                 if INFERENCE_API_URL
@@ -223,43 +295,67 @@ async def proxy_analyze_depression(file: UploadFile = File(...)):
     Aracı endpoint: gelen ses dosyasını doğrudan depresyon servisine iletir.
     Yanıt gövdesi ve HTTP durumu depresyon servisiyle aynıdır (JSON).
     """
-    tmp_path: Optional[str] = None
-    try:
-        suffix = ""
-        if file.filename:
-            safe = file.filename.replace("/", "_").replace("\\", "_")
-            suffix = f"_{safe}"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp_path = tmp.name
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                tmp.write(chunk)
+    return await _proxy_file_upload(DEPRESSION_SERVICE_URL, file, file_field_name="file")
 
-        timeout = httpx.Timeout(
-            HTTPX_TOTAL_TIMEOUT_SEC,
-            connect=HTTPX_CONNECT_TIMEOUT_SEC,
-            read=HTTPX_READ_TIMEOUT_SEC,
-        )
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            with open(tmp_path, "rb") as f:
-                files = {"file": (file.filename or "audio", f, file.content_type or "application/octet-stream")}
-                r = await client.post(DEPRESSION_SERVICE_URL, files=files)
+@app.post("/analyze-voice-to-text")
+async def proxy_analyze_voice_to_text(file: UploadFile = File(...)):
+    return await _proxy_file_upload(VOICE_TO_TEXT_URL, file, file_field_name="file")
 
-        try:
-            body = r.json()
-        except Exception:
-            body = {"detail": r.text or "Upstream returned non-JSON"}
 
-        return JSONResponse(status_code=r.status_code, content=body)
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
+@app.post("/analyze-text-sentiment")
+async def proxy_analyze_text_sentiment(payload: Dict[str, Any] = Body(...)):
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
+    return await _proxy_json(TEXT_TO_SENTIMENT_URL, {"text": text})
+
+
+@app.post("/analyze-voice-sentiment")
+async def proxy_analyze_voice_sentiment(file: UploadFile = File(...)):
+    return await _proxy_file_upload(VOICE_TO_SENTIMENT_URL, file, file_field_name="file")
+
+
+@app.post("/analyze-disease")
+async def proxy_analyze_disease(file: UploadFile = File(...)):
+    return await _proxy_file_upload(DISEASE_SERVICE_URL, file, file_field_name="file")
+
+
+@app.post("/analyze-mental-fitness")
+async def proxy_analyze_mental_fitness(file: UploadFile = File(...)):
+    return await _proxy_file_upload(MENTAL_FITNESS_URL, file, file_field_name="file")
+
+
+@app.post("/analyze-age-gender")
+async def proxy_analyze_age_gender(file: UploadFile = File(...)):
+    return await _proxy_file_upload(AGE_GENDER_URL, file, file_field_name="file")
+
+
+@app.post("/analyze-text-audio-fusion")
+async def proxy_analyze_text_audio_fusion(
+    text: str = Form(...),
+    audio: UploadFile = File(...),
+    fusion_mode: str = Form("dynamic"),
+):
+    return await _proxy_file_upload(
+        f"{TEXT_TO_SENTIMENT_URL.rsplit('/', 1)[0]}/analyze_fusion",
+        audio,
+        file_field_name="audio",
+        extra_form_data={"text": text, "fusion_mode": fusion_mode},
+    )
+
+
+@app.post("/analyze-benchmark-v2")
+async def proxy_analyze_benchmark_v2(file: UploadFile = File(...), transcript: str = Form("")):
+    if not INFERENCE_API_URL:
+        raise HTTPException(status_code=503, detail="benchmark_v2 disabled (INFERENCE_API_URL empty)")
+    predict_url = f"{INFERENCE_API_URL}/predict"
+    return await _proxy_file_upload(
+        predict_url,
+        file,
+        file_field_name="audio",
+        extra_form_data={"transcript": transcript or ""},
+    )
 
 
 @app.post("/analyze-fused")
