@@ -1,18 +1,3 @@
-import axios from 'axios';
-
-function formatAxiosError(err) {
-  if (!err) return 'Unknown error';
-  if (err.response?.data !== undefined) {
-    const d = err.response.data;
-    if (typeof d === 'object' && d !== null && 'detail' in d) {
-      const detail = d.detail;
-      return typeof detail === 'string' ? detail : JSON.stringify(detail);
-    }
-    return typeof d === 'string' ? d : JSON.stringify(d);
-  }
-  return err.message || String(err);
-}
-
 const TRANSCRIBE_URL =
   import.meta.env.VITE_TRANSCRIBE_URL || 'http://localhost:8001/transcribe';
 const VOICE_EMOTION_URL =
@@ -21,11 +6,12 @@ const MENTAL_FITNESS_URL =
   import.meta.env.VITE_MENTAL_FITNESS_URL || 'http://localhost:8005/analyze-mental';
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 
-const axiosAudio = axios.create({
-  timeout: Number.isFinite(TIMEOUT_MS) ? TIMEOUT_MS : 600000,
-  maxBodyLength: Infinity,
-  maxContentLength: Infinity,
-});
+const REQUEST_MS = Number.isFinite(TIMEOUT_MS) ? TIMEOUT_MS : 600000;
+
+function formatFetchError(err) {
+  if (!err) return 'Unknown error';
+  return err.message || String(err);
+}
 
 const extFromMime = (mime) => {
   const m = (mime || '').toLowerCase();
@@ -36,6 +22,42 @@ const extFromMime = (mime) => {
   if (m.includes('ogg')) return 'ogg';
   return 'webm';
 };
+
+/**
+ * POST multipart/form-data; JSON body. Tarayıcı boundary’yi kendisi ekler (Content-Type elle verilmez).
+ */
+async function postFormJson(url, formData) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_MS);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(text?.slice(0, 500) || res.statusText || 'Geçersiz JSON yanıt');
+    }
+    if (!res.ok) {
+      const detail = data && typeof data === 'object' && 'detail' in data ? data.detail : data;
+      const msg =
+        typeof detail === 'string' ? detail : detail != null ? JSON.stringify(detail) : res.statusText;
+      throw new Error(msg);
+    }
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error(`İstek zaman aşımı (${REQUEST_MS} ms)`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Whisper / backend expects: turkish | english | arabic (or tr|en|ar via mapping on server)
@@ -49,10 +71,7 @@ export async function transcribeAudio(audioBlob, languageCode) {
   formData.append('file', audioBlob, name);
   formData.append('language', languageCode);
 
-  const { data } = await axiosAudio.post(TRANSCRIBE_URL, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
+  return postFormJson(TRANSCRIBE_URL, formData);
 }
 
 export async function analyzeVoiceEmotion(audioBlob) {
@@ -63,10 +82,7 @@ export async function analyzeVoiceEmotion(audioBlob) {
       : `recording.${extFromMime(audioBlob?.type)}`;
   formData.append('file', audioBlob, name);
 
-  const { data } = await axiosAudio.post(VOICE_EMOTION_URL, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
+  return postFormJson(VOICE_EMOTION_URL, formData);
 }
 
 export async function analyzeMentalFitness(audioBlob) {
@@ -77,10 +93,7 @@ export async function analyzeMentalFitness(audioBlob) {
       : `recording.${extFromMime(audioBlob?.type)}`;
   formData.append('file', audioBlob, name);
 
-  const { data } = await axiosAudio.post(MENTAL_FITNESS_URL, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return data;
+  return postFormJson(MENTAL_FITNESS_URL, formData);
 }
 
 export async function runFullAnalysis(audioBlob, sttLanguage) {
@@ -92,13 +105,10 @@ export async function runFullAnalysis(audioBlob, sttLanguage) {
 
   return {
     stt: stt.status === 'fulfilled' ? stt.value : null,
-    sttError:
-      stt.status === 'rejected' ? formatAxiosError(stt.reason) : null,
+    sttError: stt.status === 'rejected' ? formatFetchError(stt.reason) : null,
     emotion: emotion.status === 'fulfilled' ? emotion.value : null,
-    emotionError:
-      emotion.status === 'rejected' ? formatAxiosError(emotion.reason) : null,
+    emotionError: emotion.status === 'rejected' ? formatFetchError(emotion.reason) : null,
     mental: mental.status === 'fulfilled' ? mental.value : null,
-    mentalError:
-      mental.status === 'rejected' ? formatAxiosError(mental.reason) : null,
+    mentalError: mental.status === 'rejected' ? formatFetchError(mental.reason) : null,
   };
 }
