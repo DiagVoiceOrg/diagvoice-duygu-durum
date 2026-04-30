@@ -1,4 +1,3 @@
-import io
 import os
 import tempfile
 import traceback
@@ -8,9 +7,11 @@ import numpy as np
 import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sklearn.base import BaseEstimator
 import joblib
 
+from deepseek_transcript import validate_transcript_meaningfulness
 from mental_fitness_classifier_v1 import extract_features
 
 app = fastapi.FastAPI()
@@ -33,6 +34,18 @@ MODEL_PATH = os.environ.get(
     "MENTAL_FITNESS_MODEL_PATH",
     "/app/models/extratreesclassifier.joblib",
 )
+
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+_REQUIRE_DEEPSEEK = os.environ.get("REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+class TranscriptMeaningRequest(BaseModel):
+    text: str = Field(..., description="STT metni")
+    language: str = Field(..., description="UI/STT dili: turkish | english | arabic vb.")
 
 print("Starting mental-fitness service and loading model...")
 try:
@@ -60,7 +73,43 @@ async def root():
     return {
         "message": "Mental fitness (canlıda olan) servisi. Ses dosyanızı /analyze-mental endpoint'ine gönderin.",
         "model_path": MODEL_PATH,
+        "transcript_validation": (
+            "POST /validate-transcript-meaning (DeepSeek; DEEPSEEK_API_KEY veya REQUIRE_* ile zorunlu)"
+        ),
     }
+
+
+@app.post("/validate-transcript-meaning")
+async def validate_transcript_meaning(body: TranscriptMeaningRequest):
+    """
+    Seçilen dile göre transkript anlamlı konuşma mı — mental fitness öncesi koruma.
+    DEEPSEEK_API_KEY yoksa (ve REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION kapalıysa) meaningful=true döner (geliştirme uyumu).
+    """
+    raw = (body.text or "").strip()
+    if not raw:
+        return {
+            "meaningful": True,
+            "reason": "empty_transcript_no_text_gate",
+            "validation_skipped": False,
+        }
+
+    if _REQUIRE_DEEPSEEK and not DEEPSEEK_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Transcript validation required but DEEPSEEK_API_KEY is not set.",
+        )
+
+    try:
+        meaningful, reason = validate_transcript_meaningfulness(
+            raw,
+            body.language,
+            api_key=DEEPSEEK_API_KEY or None,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    skipped = not DEEPSEEK_API_KEY and not _REQUIRE_DEEPSEEK
+    return {"meaningful": meaningful, "reason": reason, "validation_skipped": skipped}
 
 
 @app.post("/analyze-mental")

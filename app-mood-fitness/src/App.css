@@ -26,30 +26,83 @@
 .lang-strip {
   margin-bottom: 1rem;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.875rem;
 }
 
-.lang-strip label {
-  font-weight: 600;
+.lang-strip-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.lang-strip-title {
+  font-weight: 700;
   font-size: 0.9375rem;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
 .hint {
   font-weight: 400;
   color: var(--text-muted);
   font-size: 0.8125rem;
+  line-height: 1.45;
 }
 
-.lang-strip select {
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  font-family: inherit;
-  font-size: 0.9375rem;
-  min-width: 12rem;
-  background: #fff;
+.lang-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lang-toggle-btn {
+  flex: 1;
+  min-width: 6.5rem;
+  padding: 0.75rem 1rem !important;
+  border-radius: var(--radius-md) !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+  background: var(--surface-elevated) !important;
+  color: var(--text-main) !important;
+  border: 2px solid var(--border) !important;
+  box-shadow: none !important;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.1s ease !important;
+}
+
+.lang-toggle-btn:hover:not(:disabled) {
+  border-color: rgba(13, 148, 136, 0.45) !important;
+  background: var(--primary-subtle) !important;
+  color: var(--primary-dark) !important;
+}
+
+.lang-toggle-btn.lang-toggle-btn--active {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35) !important;
+}
+
+.lang-toggle-btn.lang-toggle-btn--active:hover:not(:disabled) {
+  filter: brightness(1.05);
+  color: #fff !important;
+}
+
+.app-rtl .meta-row.file-meta {
+  flex-direction: row-reverse;
+}
+
+.app-rtl .meta-value {
+  text-align: left;
+}
+
+.app-rtl .prob-bar-head {
+  flex-direction: row-reverse;
 }
 
 .main-grid {

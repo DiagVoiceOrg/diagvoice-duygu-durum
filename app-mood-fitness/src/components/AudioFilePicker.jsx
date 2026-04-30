@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 
-const AudioFilePicker = ({ onFileSelect, disabled }) => {
+const AudioFilePicker = ({ onFileSelect, disabled, labels }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+
+  const L = labels || {};
 
   useEffect(() => {
     return () => {
@@ -20,18 +22,18 @@ const AudioFilePicker = ({ onFileSelect, disabled }) => {
     if (file) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
-      onFileSelect(file, file.name);
+      onFileSelect(file);
     }
   };
 
   return (
     <div className="card card-file-picker">
-      <h2>Bilgisayardan ses</h2>
+      <h2>{L.title}</h2>
       <input type="file" accept="audio/*" onChange={handleChange} disabled={disabled} />
       {selectedFile && (
         <>
           <div className="meta-row file-meta">
-            <span className="meta-label">Seçilen</span>
+            <span className="meta-label">{L.selected}</span>
             <span className="meta-value">{selectedFile.name}</span>
           </div>
           {previewUrl && (
@@ -42,7 +44,7 @@ const AudioFilePicker = ({ onFileSelect, disabled }) => {
                 src={previewUrl}
                 preload="metadata"
               >
-                Tarayıcınız ses oynatmayı desteklemiyor.
+                {L.audioUnsupported}
               </audio>
             </div>
           )}

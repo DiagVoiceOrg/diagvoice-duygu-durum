@@ -1,27 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import AudioRecorder from './components/AudioRecorder';
 import AudioFilePicker from './components/AudioFilePicker';
 import { runFullAnalysis } from './services/analysis';
-
-/** Backend Whisper alan değerleri (voice_to_text resolve_whisper_language) */
-const SPEECH_LANGUAGES = [
-  { value: 'turkish', label: 'Türkçe' },
-  { value: 'english', label: 'English' },
-  { value: 'arabic', label: 'العربية' },
-];
-
-const EMOTION_TR = {
-  sadness: 'Üzüntü',
-  fear: 'Korku',
-  happiness: 'Mutluluk',
-  anger: 'Öfke',
-};
-
-const MENTAL_TR = {
-  healthy: 'Healthy (olumlu)',
-  depression: 'Depression (risk)',
-};
+import { UI_LANGUAGES, getStrings, interpolate, htmlLangAttribute } from './i18n';
 
 function ProbBar({ label, value, color }) {
   const v = Math.min(100, Math.max(0, Number(value) * 100));
@@ -57,6 +39,15 @@ export default function App() {
   const [mental, setMental] = useState(null);
   const [mentalError, setMentalError] = useState(null);
 
+  const m = getStrings(speechLang);
+  const isRtl = speechLang === 'arabic';
+
+  useEffect(() => {
+    document.documentElement.lang = htmlLangAttribute(speechLang);
+    document.documentElement.dir = isRtl ? 'rtl' : 'ltr';
+    document.title = m.pageTitle;
+  }, [speechLang, isRtl, m.pageTitle]);
+
   const resetResults = () => {
     setFatalError('');
     setStt(null);
@@ -70,6 +61,7 @@ export default function App() {
   const analyzeAudio = useCallback(
     async (blob, sourceName) => {
       if (!blob) return;
+      const loc = getStrings(speechLang);
       resetResults();
       setIsLoading(true);
       setCurrentAnalysisSource(sourceName);
@@ -82,9 +74,9 @@ export default function App() {
         setMental(out.mental);
         setMentalError(out.mentalError);
       } catch (err) {
-        const msg = err?.message || 'Bilinmeyen bir hata oluştu';
+        const msg = err?.message || loc.unknownError;
         console.error(`Analysis failed for ${sourceName}:`, err);
-        setFatalError(`"${sourceName}" analizi sırasında bir hata oluştu: ${msg}`);
+        setFatalError(`${interpolate(loc.fatalErrorPrefix, { source: sourceName })} ${msg}`);
       } finally {
         setIsLoading(false);
       }
@@ -94,9 +86,9 @@ export default function App() {
 
   const onRecordingComplete = useCallback(
     (blob) => {
-      analyzeAudio(blob, 'Yeni kayıt');
+      analyzeAudio(blob, getStrings(speechLang).sourceNewRecording);
     },
-    [analyzeAudio],
+    [analyzeAudio, speechLang],
   );
 
   const onFileSelect = useCallback(
@@ -114,39 +106,68 @@ export default function App() {
     ? Object.keys(emotion.labels).sort((a, b) => Number(a) - Number(b))
     : [];
 
+  const whisperLangLabel =
+    stt?.language &&
+    m.whisperLangDisplay[String(stt.language).toLowerCase()]
+      ? m.whisperLangDisplay[String(stt.language).toLowerCase()]
+      : stt?.language;
+
   return (
-    <div className="app-container">
+    <div className={`app-container${isRtl ? ' app-rtl' : ''}`}>
       <header className="app-header">
         <div className="brand-name">DiagVoice</div>
-        <div className="title">Duygu durumu &amp; mental fitness</div>
+        <div className="title">{m.headerSubtitle}</div>
       </header>
 
-      <section className="lang-strip card">
-        <label htmlFor="speech-lang">
-          Konuşma dili <span className="hint">(STT çıktısı bu dilde yazılır)</span>
-        </label>
-        <select
-          id="speech-lang"
-          value={speechLang}
-          onChange={(e) => setSpeechLang(e.target.value)}
-          disabled={isLoading}
-        >
-          {SPEECH_LANGUAGES.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
+      <section className="lang-strip card" aria-label={m.langSectionTitle}>
+        <div className="lang-strip-head">
+          <span className="lang-strip-title">{m.langSectionTitle}</span>
+          <span className="hint">{m.langSectionHint}</span>
+        </div>
+        <div className="lang-toggle" role="group" aria-label={m.langSectionTitle}>
+          {UI_LANGUAGES.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`lang-toggle-btn${speechLang === opt.value ? ' lang-toggle-btn--active' : ''}`}
+              onClick={() => setSpeechLang(opt.value)}
+              disabled={isLoading}
+              aria-pressed={speechLang === opt.value}
+              lang={htmlLangAttribute(opt.value)}
+            >
+              {opt.nativeLabel}
+            </button>
           ))}
-        </select>
+        </div>
       </section>
 
       <div className="main-grid">
-        <AudioRecorder onRecordingComplete={onRecordingComplete} disabled={isLoading} />
-        <AudioFilePicker onFileSelect={onFileSelect} disabled={isLoading} />
+        <AudioRecorder
+          onRecordingComplete={onRecordingComplete}
+          disabled={isLoading}
+          labels={{
+            title: m.micCardTitle,
+            start: m.startRecord,
+            stop: m.stopRecord,
+            play: m.play,
+            pause: m.pause,
+            micDenied: m.micDenied,
+          }}
+        />
+        <AudioFilePicker
+          onFileSelect={onFileSelect}
+          disabled={isLoading}
+          labels={{
+            title: m.fileCardTitle,
+            selected: m.selectedFile,
+            audioUnsupported: m.audioUnsupported,
+          }}
+        />
       </div>
 
       {isLoading && (
         <div className="loading">
-          &quot;{currentAnalysisSource}&quot; için analiz yapılıyor... Lütfen bekleyin.
+          {interpolate(m.analyzingLoading, { source: currentAnalysisSource })}
         </div>
       )}
 
@@ -155,14 +176,15 @@ export default function App() {
       {showResults && (
         <section className="results-section">
           <article className="card result-block">
-            <h2>Ses duygu durumu</h2>
+            <h2>{m.emotionSectionTitle}</h2>
             {emotionError && <p className="err">{emotionError}</p>}
             {!emotionError && emotion && (
               <>
                 <p className="lead">
-                  Tahmin: <strong>{EMOTION_TR[emotion.pred_label] || emotion.pred_label}</strong>
+                  {m.prediction}:{' '}
+                  <strong>{m.emotions[emotion.pred_label] || emotion.pred_label}</strong>
                   {' · '}
-                  Yoğunluk: {(Number(emotion.intensity) * 100).toFixed(0)}%
+                  {m.intensity}: {(Number(emotion.intensity) * 100).toFixed(0)}%
                 </p>
                 {emotion.probs &&
                   labelsOrder.map((idx) => {
@@ -170,7 +192,7 @@ export default function App() {
                     return (
                       <ProbBar
                         key={idx}
-                        label={EMOTION_TR[key] || key}
+                        label={m.emotions[key] || key}
                         value={emotion.probs[Number(idx)]}
                         color={emotionColors[Number(idx) % emotionColors.length]}
                       />
@@ -178,44 +200,48 @@ export default function App() {
                   })}
               </>
             )}
-            {!emotionError && !emotion && <p className="muted">Bu bileşen için sonuç dönmedi.</p>}
+            {!emotionError && !emotion && <p className="muted">{m.noComponentResult}</p>}
           </article>
 
           <article className="card result-block">
-            <h2>Mental fitness ve konuşma metni</h2>
-            <h3 className="h3">Transkripsiyon (STT)</h3>
+            <h2>{m.mentalSectionTitle}</h2>
+            <h3 className="h3">{m.transcriptionTitle}</h3>
             {sttError && <p className="err">{sttError}</p>}
             {!sttError && stt && (
               <div className="transcript-box" dir="auto">
-                {stt.text || <span className="muted">(boş)</span>}
-                {stt.language && (
-                  <p className="meta-small">Algılanan / seçilen dil: {stt.language}</p>
+                {stt.text || <span className="muted">{m.emptyTranscript}</span>}
+                {whisperLangLabel && (
+                  <p className="meta-small">
+                    {m.transcriptLangLabel}: {whisperLangLabel}
+                  </p>
                 )}
               </div>
             )}
-            {!sttError && !stt && <p className="muted">Bu bileşen için sonuç dönmedi.</p>}
+            {!sttError && !stt && <p className="muted">{m.noComponentResult}</p>}
 
-            <h3 className="h3">Mental fitness</h3>
+            <h3 className="h3">{m.mentalFitnessHeading}</h3>
+            <p className="meta-small muted">{m.mentalHint}</p>
             {mentalError && <p className="err">{mentalError}</p>}
             {!mentalError && mental && (
               <div>
                 <p className="lead">
-                  Sınıf: <strong>{MENTAL_TR[mental.pred_label] || mental.pred_label}</strong>
+                  {m.mentalClass}:{' '}
+                  <strong>{m.mentalLabels[mental.pred_label] || mental.pred_label}</strong>
                   {mental.mental_fitness_score != null && (
                     <>
                       {' · '}
-                      Skor: <strong>{mental.mental_fitness_score}</strong>
+                      {m.score}: <strong>{mental.mental_fitness_score}</strong>
                     </>
                   )}
                 </p>
                 {mental.probs && mental.probs.length > 0 && (
                   <p className="muted small">
-                    Olasılıklar: {mental.probs.map((p) => p.toFixed(3)).join(', ')}
+                    {m.probsLabel}: {mental.probs.map((p) => p.toFixed(3)).join(', ')}
                   </p>
                 )}
               </div>
             )}
-            {!mentalError && !mental && <p className="muted">Bu bileşen için sonuç dönmedi.</p>}
+            {!mentalError && !mental && <p className="muted">{m.noComponentResult}</p>}
           </article>
         </section>
       )}

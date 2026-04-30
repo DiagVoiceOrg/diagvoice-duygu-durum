@@ -100,13 +100,7 @@ async def transcribe_audio(
         raise HTTPException(status_code=500, detail="Model could not be loaded. Check server logs.")
 
     whisper_lang = resolve_whisper_language(language)
-    try:
-        forced_decoder_ids = processor.get_decoder_prompt_ids(language=whisper_lang, task="transcribe")
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported or invalid language '{language}' (resolved {whisper_lang}): {e}",
-        )
+    print(f"STT form language={language!r} -> whisper_lang={whisper_lang!r}")
 
     temp_file_path = None
     try:
@@ -176,9 +170,13 @@ async def transcribe_audio(
             features = input_features["input_features"].to(device=device, dtype=dtype)
 
             with torch.no_grad():
+                # Dil için `language=` + `task=` kullan (HF Whisper önerisi). Eski `forced_decoder_ids`
+                # ile checkpoint'teki varsayılan çakışabiliyor; `get_decoder_prompt_ids` da tokenizer'da
+                # paylaşımlı state değiştirir (eşzamanlı isteklerde risk).
                 generated_ids = speech_to_text_model.generate(
-                    features,
-                    forced_decoder_ids=forced_decoder_ids,
+                    input_features=features,
+                    language=whisper_lang,
+                    task="transcribe",
                     max_new_tokens=256,
                 )
 

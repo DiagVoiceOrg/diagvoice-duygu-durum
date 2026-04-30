@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RecordPlugin from 'wavesurfer.js/dist/plugins/record.esm.js';
 
-const AudioRecorder = ({ onRecordingComplete, disabled }) => {
+const AudioRecorder = ({ onRecordingComplete, disabled, labels }) => {
   const waveContainerRef = useRef(null);
   const wavesurferRef = useRef(null);
   const recordPluginRef = useRef(null);
@@ -54,9 +54,9 @@ const AudioRecorder = ({ onRecordingComplete, disabled }) => {
       setIsRecording(true);
     } catch (e) {
       console.error(e);
-      alert('Mikrofon erişimi reddedildi veya bir hata oluştu.');
+      alert(labels?.micDenied || 'Microphone error.');
     }
-  }, [createWaveSurfer, onRecordingComplete, isRecording]);
+  }, [createWaveSurfer, onRecordingComplete, isRecording, labels?.micDenied]);
 
   const stopRecording = useCallback(() => {
     if (recordPluginRef.current) {
@@ -79,23 +79,25 @@ const AudioRecorder = ({ onRecordingComplete, disabled }) => {
     }
   }, [audioUrl]);
 
+  const L = labels || {};
+
   return (
     <div className="card card-recorder">
-      <h2>Mikrofon kaydı</h2>
+      <h2>{L.title}</h2>
       <div ref={waveContainerRef} className="waveform-container" />
       <div className="btn-row">
         {!isRecording ? (
           <button type="button" onClick={startRecording} disabled={disabled}>
-            Kaydı başlat
+            {L.start}
           </button>
         ) : (
           <button type="button" onClick={stopRecording} disabled={!isRecording}>
-            Kaydı durdur
+            {L.stop}
           </button>
         )}
         {audioUrl && !isRecording && (
           <button type="button" onClick={handlePlayPause} className="secondary">
-            {isPlaying ? 'Durdur' : 'Oynat'}
+            {isPlaying ? L.pause : L.play}
           </button>
         )}
       </div>
