@@ -1,6 +1,7 @@
 import asyncio
-import os
 import math
+import os
+import re
 import tempfile
 from typing import Any, Dict, Optional
 
@@ -10,6 +11,18 @@ import uvicorn
 from fastapi import Body, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+
+def _ipv4_loopback_url(url: str) -> str:
+    """
+    Tek Docker konteyner içinde supervisord ile yan yana servisler IPv4'te dinler.
+    `localhost` bazen önce IPv6 (::1) olarak çözülür; httpx bağlantı düşer.
+    İç servis URL'lerinde 127.0.0.1 kullanımını zorunlu kılar.
+    """
+    if not url or not isinstance(url, str):
+        return url
+    return re.sub(r"(?i)//localhost(?=:|/)", "//127.0.0.1", url.strip())
+
 
 app = fastapi.FastAPI()
 
@@ -27,13 +40,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VOICE_TO_TEXT_URL = os.environ.get("VOICE_TO_TEXT_URL", "http://localhost:8001/transcribe")
-TEXT_TO_SENTIMENT_URL = os.environ.get("TEXT_TO_SENTIMENT_URL", "http://localhost:8000/analyze")
-VOICE_TO_SENTIMENT_URL = os.environ.get("VOICE_TO_SENTIMENT_URL", "http://localhost:8002/analyze-audio")
-DISEASE_SERVICE_URL = os.environ.get("DISEASE_SERVICE_URL", "http://localhost:8004/analyze-disease")
-MENTAL_FITNESS_URL = os.environ.get("MENTAL_FITNESS_URL", "http://localhost:8005/analyze-mental")
-AGE_GENDER_URL = os.environ.get("AGE_GENDER_URL", "http://localhost:8006/analyze-age-gender")
-DEPRESSION_SERVICE_URL = os.environ.get("DEPRESSION_SERVICE_URL", "http://localhost:8007/analyze-depression")
+VOICE_TO_TEXT_URL = _ipv4_loopback_url(
+    os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8001/transcribe")
+)
+TEXT_TO_SENTIMENT_URL = _ipv4_loopback_url(
+    os.environ.get("TEXT_TO_SENTIMENT_URL", "http://127.0.0.1:8000/analyze")
+)
+VOICE_TO_SENTIMENT_URL = _ipv4_loopback_url(
+    os.environ.get("VOICE_TO_SENTIMENT_URL", "http://127.0.0.1:8002/analyze-audio")
+)
+DISEASE_SERVICE_URL = _ipv4_loopback_url(
+    os.environ.get("DISEASE_SERVICE_URL", "http://127.0.0.1:8004/analyze-disease")
+)
+MENTAL_FITNESS_URL = _ipv4_loopback_url(
+    os.environ.get("MENTAL_FITNESS_URL", "http://127.0.0.1:8005/analyze-mental")
+)
+AGE_GENDER_URL = _ipv4_loopback_url(
+    os.environ.get("AGE_GENDER_URL", "http://127.0.0.1:8006/analyze-age-gender")
+)
+DEPRESSION_SERVICE_URL = _ipv4_loopback_url(
+    os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8007/analyze-depression")
+)
 
 # benchmark_v2 (inference_api Flask, iç ağ) — boş string ile kapatılabilir
 _inference_url_raw = os.environ.get("INFERENCE_API_URL")
@@ -42,7 +69,7 @@ if _inference_url_raw is None:
 elif not str(_inference_url_raw).strip():
     INFERENCE_API_URL = ""
 else:
-    INFERENCE_API_URL = str(_inference_url_raw).strip().rstrip("/")
+    INFERENCE_API_URL = _ipv4_loopback_url(str(_inference_url_raw).strip().rstrip("/"))
 
 HTTPX_TOTAL_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_TIMEOUT_SEC", "900"))
 HTTPX_CONNECT_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_CONNECT_TIMEOUT_SEC", "30"))
