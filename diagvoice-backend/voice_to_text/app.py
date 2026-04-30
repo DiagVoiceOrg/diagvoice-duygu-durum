@@ -8,7 +8,7 @@ import tempfile
 import os
 import traceback
 from pathlib import Path
-from fastapi import UploadFile, File, HTTPException
+from fastapi import UploadFile, File, Form, HTTPException
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 from fastapi.middleware.cors import CORSMiddleware
 from pydub import AudioSegment
@@ -18,7 +18,7 @@ app = fastapi.FastAPI()
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
-    "https://diagvoice.huseyinalav.me,http://localhost:5173,http://127.0.0.1:5173,https://duygudurum.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
+    "https://diagvoice.huseyinalav.me,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://duygudurum.diagvoice.com,https://emosyon.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
 )
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
@@ -47,21 +47,48 @@ try:
     )
     speech_to_text_model.to(device)
     speech_to_text_model.eval()
-    forced_decoder_ids = processor.get_decoder_prompt_ids(language="turkish", task="transcribe")
     print("Model loaded successfully.")
 except Exception as e:
     print("!!! FATAL: Failed to load model !!!")
     print(traceback.format_exc())
     processor = None
     speech_to_text_model = None
-    forced_decoder_ids = None
+
+def resolve_whisper_language(language: str | None) -> str:
+    """Map UI / short codes to Whisper decoder language ids (English names)."""
+    if not language or not str(language).strip():
+        return "turkish"
+    key = str(language).strip().lower()
+    mapping = {
+        "tr": "turkish",
+        "turkish": "turkish",
+        "türkçe": "turkish",
+        "turkce": "turkish",
+        "en": "english",
+        "english": "english",
+        "ingilizce": "english",
+        "ar": "arabic",
+        "arabic": "arabic",
+        "arab": "arabic",
+        "عربي": "arabic",
+        "العربية": "arabic",
+    }
+    return mapping.get(key, "turkish")
+
 
 @app.get("/")
 async def root():
-    return {"message": "Voice-to-Text API. Ses dosyanızı /transcribe endpoint'ine POST isteği ile gönderin."}
+    return {
+        "message": "Voice-to-Text API. POST audio to /transcribe.",
+        "transcribe": "multipart: file + optional Form field 'language' (turkish|english|arabic or tr|en|ar). Default turkish.",
+    }
+
 
 @app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str = Form("turkish"),
+):
     """
     Yüklenen ses dosyasını (m4a, mp4, wav, vb.) metne çevirir.
     pydub kullanmak için sistemde ffmpeg yüklü olmalıdır.
@@ -71,6 +98,15 @@ async def transcribe_audio(file: UploadFile = File(...)):
     if speech_to_text_model is None or processor is None:
         print("Error: Model is not loaded.")
         raise HTTPException(status_code=500, detail="Model could not be loaded. Check server logs.")
+
+    whisper_lang = resolve_whisper_language(language)
+    try:
+        forced_decoder_ids = processor.get_decoder_prompt_ids(language=whisper_lang, task="transcribe")
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported or invalid language '{language}' (resolved {whisper_lang}): {e}",
+        )
 
     temp_file_path = None
     try:
@@ -153,7 +189,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         full_transcription = " ".join(chunk_texts).strip()
         print("Step 8: Chunked transcription successful.")
 
-        return {"text": full_transcription}
+        return {"text": full_transcription, "language": whisper_lang}
 
     except Exception as e:
         print(f"!!! AN ERROR OCCURRED: {e} !!!")

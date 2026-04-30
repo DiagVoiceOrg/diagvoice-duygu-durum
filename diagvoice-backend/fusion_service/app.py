@@ -1,3 +1,4 @@
+import asyncio
 import os
 import math
 import tempfile
@@ -14,7 +15,7 @@ app = fastapi.FastAPI()
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
-    "https://diagvoice.huseyinalav.me,http://localhost:5173,http://127.0.0.1:5173,https://duygudurum.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
+    "https://diagvoice.huseyinalav.me,http://localhost:5173,http://127.0.0.1:5173,https://duygudurum.diagvoice.com,https://emosyon.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
 )
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
@@ -193,6 +194,45 @@ def _build_timeout() -> httpx.Timeout:
     )
 
 
+async def _fusion_post_multipart_file(
+    client: httpx.AsyncClient,
+    url: str,
+    tmp_path: str,
+    *,
+    file_field: str,
+    upload_name: str,
+    content_type: str,
+    extra_form: Optional[Dict[str, str]] = None,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        with open(tmp_path, "rb") as fh:
+            files = {file_field: (upload_name, fh, content_type or "application/octet-stream")}
+            r = await client.post(url, files=files, data=extra_form or None)
+        r.raise_for_status()
+        body = r.json()
+        if not isinstance(body, dict):
+            return None, f"non-dict JSON from {url}"
+        return body, None
+    except Exception as e:
+        return None, f"request failed (url={url}): {e}"
+
+
+async def _fusion_post_json(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: Dict[str, Any],
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        r = await client.post(url, json=payload)
+        r.raise_for_status()
+        body = r.json()
+        if not isinstance(body, dict):
+            return None, f"non-dict JSON from {url}"
+        return body, None
+    except Exception as e:
+        return None, f"request failed (url={url}): {e}"
+
+
 async def _proxy_file_upload(
     upstream_url: str,
     file: UploadFile,
@@ -252,7 +292,10 @@ async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONRespons
 @app.get("/")
 async def root():
     return {
-        "message": "Fusion service. POST audio to /analyze-fused.",
+        "message": (
+            "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion "
+            "signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2."
+        ),
         "deps": {
             "voice_to_text": VOICE_TO_TEXT_URL,
             "text_to_sentiment": TEXT_TO_SENTIMENT_URL,
@@ -375,6 +418,9 @@ async def analyze_fused(file: UploadFile = File(...)):
                     break
                 tmp.write(chunk)
 
+        assert tmp_path is not None
+        disk = tmp_path
+
         timeout = httpx.Timeout(
             HTTPX_TOTAL_TIMEOUT_SEC,
             connect=HTTPX_CONNECT_TIMEOUT_SEC,
@@ -384,49 +430,134 @@ async def analyze_fused(file: UploadFile = File(...)):
         benchmark_v2_result: Optional[Dict[str, Any]] = None
         benchmark_v2_err: Optional[str] = None
         stt_text: Optional[str] = None
-        stt_err: Optional[str] = "skipped: disabled for fast mode"
+        stt_err: Optional[str] = None
         audio_result: Optional[Dict[str, Any]] = None
-        audio_err: Optional[str] = "skipped: disabled for fast mode"
+        audio_err: Optional[str] = None
         text_result: Optional[Dict[str, Any]] = None
-        text_err: Optional[str] = "skipped: disabled for fast mode"
+        text_err: Optional[str] = None
         disease_result: Optional[Dict[str, Any]] = None
-        disease_err: Optional[str] = "skipped: disabled for fast mode"
+        disease_err: Optional[str] = None
         mental_fitness_result: Optional[Dict[str, Any]] = None
-        mental_fitness_err: Optional[str] = "skipped: disabled for fast mode"
+        mental_fitness_err: Optional[str] = None
         age_gender_result: Optional[Dict[str, Any]] = None
-        age_gender_err: Optional[str] = "skipped: disabled for fast mode"
+        age_gender_err: Optional[str] = None
         depression_result: Optional[Dict[str, Any]] = None
         depression_err: Optional[str] = None
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # Fast mode: sadece depression + benchmark_v2 çağrılır.
-            try:
-                with open(tmp_path, "rb") as f:
-                    files = {"file": (file.filename or "audio", f, file.content_type or "application/octet-stream")}
-                    r = await client.post(DEPRESSION_SERVICE_URL, files=files)
-                r.raise_for_status()
-                depression_result = r.json()
-            except Exception as e:
-                depression_err = f"depression_service request failed (url={DEPRESSION_SERVICE_URL}): {e}"
+        upload_name = (file.filename or "audio.wav").replace("/", "_").replace("\\", "_")
+        ct = file.content_type or "application/octet-stream"
 
-            # benchmark_v2 (is_sağlığı tabular joblib) — iç Flask inference_api
+        async def _run_stt(c: httpx.AsyncClient) -> None:
+            nonlocal stt_text, stt_err
+            body, err = await _fusion_post_multipart_file(
+                c,
+                VOICE_TO_TEXT_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+            if err:
+                stt_err = err
+                return
+            t = body.get("text") if body else None
+            if t is None:
+                stt_err = "voice_to_text: missing 'text' in response"
+                return
+            stt_text = str(t)
+
+        async def _run_voice_sentiment(c: httpx.AsyncClient) -> None:
+            nonlocal audio_result, audio_err
+            audio_result, audio_err = await _fusion_post_multipart_file(
+                c,
+                VOICE_TO_SENTIMENT_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+
+        async def _run_disease(c: httpx.AsyncClient) -> None:
+            nonlocal disease_result, disease_err
+            disease_result, disease_err = await _fusion_post_multipart_file(
+                c,
+                DISEASE_SERVICE_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+
+        async def _run_mental(c: httpx.AsyncClient) -> None:
+            nonlocal mental_fitness_result, mental_fitness_err
+            mental_fitness_result, mental_fitness_err = await _fusion_post_multipart_file(
+                c,
+                MENTAL_FITNESS_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+
+        async def _run_age_gender(c: httpx.AsyncClient) -> None:
+            nonlocal age_gender_result, age_gender_err
+            age_gender_result, age_gender_err = await _fusion_post_multipart_file(
+                c,
+                AGE_GENDER_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+
+        async def _run_depression(c: httpx.AsyncClient) -> None:
+            nonlocal depression_result, depression_err
+            depression_result, depression_err = await _fusion_post_multipart_file(
+                c,
+                DEPRESSION_SERVICE_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+            )
+
+        predict_url = f"{INFERENCE_API_URL}/predict" if INFERENCE_API_URL else ""
+
+        async def _run_benchmark(c: httpx.AsyncClient, transcript: str) -> None:
+            nonlocal benchmark_v2_result, benchmark_v2_err
+            benchmark_v2_result, benchmark_v2_err = await _fusion_post_multipart_file(
+                c,
+                predict_url,
+                disk,
+                file_field="audio",
+                upload_name=upload_name,
+                content_type=ct,
+                extra_form={"transcript": transcript or ""},
+            )
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await asyncio.gather(
+                _run_stt(client),
+                _run_voice_sentiment(client),
+                _run_disease(client),
+                _run_mental(client),
+                _run_age_gender(client),
+                _run_depression(client),
+            )
+
+            transcript = (stt_text or "").strip()
+            if transcript:
+                text_result, text_err = await _fusion_post_json(client, TEXT_TO_SENTIMENT_URL, {"text": transcript})
+            elif stt_err:
+                text_err = f"text_sentiment skipped: STT failed ({stt_err})"
+            elif stt_text is not None:
+                text_err = "skipped: empty transcript after STT"
+            else:
+                text_err = "text_sentiment skipped: no transcript"
+
             if INFERENCE_API_URL:
-                predict_url = f"{INFERENCE_API_URL}/predict"
-                try:
-                    with open(tmp_path, "rb") as f:
-                        files = {
-                            "audio": (
-                                (file.filename or "audio.wav").replace("/", "_").replace("\\", "_"),
-                                f,
-                                file.content_type or "application/octet-stream",
-                            )
-                        }
-                        data = {"transcript": ""}
-                        r = await client.post(predict_url, files=files, data=data)
-                    r.raise_for_status()
-                    benchmark_v2_result = r.json()
-                except Exception as e:
-                    benchmark_v2_err = f"benchmark_inference request failed (url={predict_url}): {e}"
+                await _run_benchmark(client, transcript)
+
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
