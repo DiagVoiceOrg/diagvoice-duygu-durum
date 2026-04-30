@@ -75,6 +75,10 @@ HTTPX_TOTAL_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_TIMEOUT_SEC", "900")
 HTTPX_CONNECT_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_CONNECT_TIMEOUT_SEC", "30"))
 HTTPX_READ_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_READ_TIMEOUT_SEC", "900"))
 
+# STT vb. modeller yüklenene kadar upstream kapalı olabilir — ConnectError'da tekrar dene
+FUSION_UPSTREAM_CONNECT_RETRIES = max(1, int(os.environ.get("FUSION_UPSTREAM_CONNECT_RETRIES", "60")))
+FUSION_UPSTREAM_RETRY_DELAY_SEC = float(os.environ.get("FUSION_UPSTREAM_RETRY_DELAY_SEC", "2.0"))
+
 FUSION_W_TEXT = float(os.environ.get("FUSION_W_TEXT", "0.5"))
 FUSION_W_TEXT = max(0.0, min(1.0, FUSION_W_TEXT))
 
@@ -221,6 +225,14 @@ def _build_timeout() -> httpx.Timeout:
     )
 
 
+def _is_upstream_connection_error(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return True
+    if isinstance(exc, httpx.HTTPError) and exc.__cause__ is not None:
+        return _is_upstream_connection_error(exc.__cause__)
+    return False
+
+
 async def _fusion_post_multipart_file(
     client: httpx.AsyncClient,
     url: str,
@@ -231,17 +243,33 @@ async def _fusion_post_multipart_file(
     content_type: str,
     extra_form: Optional[Dict[str, str]] = None,
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    try:
-        with open(tmp_path, "rb") as fh:
-            files = {file_field: (upload_name, fh, content_type or "application/octet-stream")}
-            r = await client.post(url, files=files, data=extra_form or None)
-        r.raise_for_status()
-        body = r.json()
-        if not isinstance(body, dict):
-            return None, f"non-dict JSON from {url}"
-        return body, None
-    except Exception as e:
-        return None, f"request failed (url={url}): {e}"
+    last_conn: Optional[BaseException] = None
+    for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
+        try:
+            if attempt > 0:
+                await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
+            with open(tmp_path, "rb") as fh:
+                files = {file_field: (upload_name, fh, content_type or "application/octet-stream")}
+                r = await client.post(url, files=files, data=extra_form or None)
+            r.raise_for_status()
+            body = r.json()
+            if not isinstance(body, dict):
+                return None, f"non-dict JSON from {url}"
+            return body, None
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            last_conn = e
+            if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                return None, (
+                    f"request failed (url={url}): upstream unreachable after "
+                    f"{FUSION_UPSTREAM_CONNECT_RETRIES} attempts ({e})"
+                )
+            continue
+        except Exception as e:
+            if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
+                last_conn = e
+                continue
+            return None, f"request failed (url={url}): {e}"
+    return None, f"request failed (url={url}): {last_conn}"
 
 
 async def _fusion_post_json(
@@ -249,15 +277,31 @@ async def _fusion_post_json(
     url: str,
     payload: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    try:
-        r = await client.post(url, json=payload)
-        r.raise_for_status()
-        body = r.json()
-        if not isinstance(body, dict):
-            return None, f"non-dict JSON from {url}"
-        return body, None
-    except Exception as e:
-        return None, f"request failed (url={url}): {e}"
+    last_conn: Optional[BaseException] = None
+    for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
+        try:
+            if attempt > 0:
+                await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
+            r = await client.post(url, json=payload)
+            r.raise_for_status()
+            body = r.json()
+            if not isinstance(body, dict):
+                return None, f"non-dict JSON from {url}"
+            return body, None
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            last_conn = e
+            if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                return None, (
+                    f"request failed (url={url}): upstream unreachable after "
+                    f"{FUSION_UPSTREAM_CONNECT_RETRIES} attempts ({e})"
+                )
+            continue
+        except Exception as e:
+            if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
+                last_conn = e
+                continue
+            return None, f"request failed (url={url}): {e}"
+    return None, f"request failed (url={url}): {last_conn}"
 
 
 async def _proxy_file_upload(
@@ -281,17 +325,42 @@ async def _proxy_file_upload(
                     break
                 tmp.write(chunk)
 
-        async with httpx.AsyncClient(timeout=_build_timeout()) as client:
-            with open(tmp_path, "rb") as f:
-                files = {
-                    file_field_name: (
-                        file.filename or "audio",
-                        f,
-                        file.content_type or "application/octet-stream",
+        r: Optional[httpx.Response] = None
+        for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
+            try:
+                if attempt > 0:
+                    await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
+                async with httpx.AsyncClient(timeout=_build_timeout()) as client:
+                    with open(tmp_path, "rb") as f:
+                        files = {
+                            file_field_name: (
+                                file.filename or "audio",
+                                f,
+                                file.content_type or "application/octet-stream",
+                            )
+                        }
+                        r = await client.post(upstream_url, files=files, data=extra_form_data)
+                break
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "detail": (
+                                f"Upstream not reachable after {FUSION_UPSTREAM_CONNECT_RETRIES} attempts: {e}"
+                            )
+                        },
                     )
-                }
-                r = await client.post(upstream_url, files=files, data=extra_form_data)
+            except Exception as e:
+                if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
+                    continue
+                return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
+        if r is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Upstream not reachable (no response)."},
+            )
         try:
             body = r.json()
         except Exception:
@@ -306,9 +375,31 @@ async def _proxy_file_upload(
 
 
 async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONResponse:
-    async with httpx.AsyncClient(timeout=_build_timeout()) as client:
-        r = await client.post(upstream_url, json=payload)
+    r: Optional[httpx.Response] = None
+    for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
+        try:
+            if attempt > 0:
+                await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
+            async with httpx.AsyncClient(timeout=_build_timeout()) as client:
+                r = await client.post(upstream_url, json=payload)
+            break
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": (
+                            f"Upstream not reachable after {FUSION_UPSTREAM_CONNECT_RETRIES} attempts: {e}"
+                        )
+                    },
+                )
+        except Exception as e:
+            if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
+                continue
+            return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
+    if r is None:
+        return JSONResponse(status_code=503, content={"detail": "Upstream not reachable (no response)."})
     try:
         body = r.json()
     except Exception:
