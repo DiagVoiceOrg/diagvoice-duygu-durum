@@ -55,6 +55,16 @@ DISEASE_SERVICE_URL = _ipv4_loopback_url(
 MENTAL_FITNESS_URL = _ipv4_loopback_url(
     os.environ.get("MENTAL_FITNESS_URL", "http://127.0.0.1:8005/analyze-mental")
 )
+_mf_validate_env = os.environ.get("MENTAL_FITNESS_VALIDATE_URL", "").strip()
+if _mf_validate_env:
+    MENTAL_FITNESS_VALIDATE_URL = _ipv4_loopback_url(_mf_validate_env)
+else:
+    _mf_u = MENTAL_FITNESS_URL.rstrip("/")
+    _mf_sfx = "/analyze-mental"
+    if _mf_u.lower().endswith(_mf_sfx):
+        MENTAL_FITNESS_VALIDATE_URL = _mf_u[: -len(_mf_sfx)] + "/validate-transcript-meaning"
+    else:
+        MENTAL_FITNESS_VALIDATE_URL = _mf_u + "/validate-transcript-meaning"
 AGE_GENDER_URL = _ipv4_loopback_url(
     os.environ.get("AGE_GENDER_URL", "http://127.0.0.1:8006/analyze-age-gender")
 )
@@ -420,6 +430,7 @@ async def root():
             "voice_to_sentiment": VOICE_TO_SENTIMENT_URL,
             "disease_service": DISEASE_SERVICE_URL,
             "mental_fitness": MENTAL_FITNESS_URL,
+            "mental_fitness_validate_transcript": MENTAL_FITNESS_VALIDATE_URL,
             "age_gender": AGE_GENDER_URL,
             "depression_service": DEPRESSION_SERVICE_URL,
             "benchmark_inference": INFERENCE_API_URL or None,
@@ -431,6 +442,10 @@ async def root():
             "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
             "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
             "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+            "mental_fitness_transcript": (
+                "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) "
+                "-> forwards to mental_fitness /validate-transcript-meaning"
+            ),
             "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
             "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
             "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
@@ -485,6 +500,15 @@ async def proxy_analyze_disease(file: UploadFile = File(...)):
 @app.post("/analyze-mental-fitness")
 async def proxy_analyze_mental_fitness(file: UploadFile = File(...)):
     return await _proxy_file_upload(MENTAL_FITNESS_URL, file, file_field_name="file")
+
+
+@app.post("/analyze-mental-fitness/validate-transcript-meaning")
+async def proxy_validate_transcript_meaning(payload: Dict[str, Any] = Body(...)):
+    """Mental fitness servisindeki POST /validate-transcript-meaning ile aynı gövde: {text, language}."""
+    return await _proxy_json(
+        MENTAL_FITNESS_VALIDATE_URL,
+        {"text": str(payload.get("text", "")), "language": str(payload.get("language", ""))},
+    )
 
 
 @app.post("/analyze-age-gender")
