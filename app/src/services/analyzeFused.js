@@ -13,13 +13,21 @@ const extFromMime = (mime) => {
   return 'wav';
 };
 
-export const analyzeFused = async (audioData) => {
+/** Fusion/STT’nin beklediği kod: tr | en | ar */
+export function normalizeSpeechLanguageForStt(raw) {
+  const s = String(raw ?? 'tr').trim().toLowerCase();
+  return s === 'en' || s === 'ar' ? s : 'tr';
+}
+
+/** @param {Blob|File} audioData */
+export const analyzeFused = async (audioData, speechLanguage = 'tr') => {
   const formData = new FormData();
   const hasName = audioData && typeof audioData.name === 'string' && audioData.name.length > 0;
   const fileName = hasName
     ? audioData.name
     : `recording.${extFromMime(audioData?.type)}`;
   formData.append("file", audioData, fileName);
+  formData.append('speech_language', normalizeSpeechLanguageForStt(speechLanguage));
 
   try {
     const response = await axios.post(API_URL, formData, {

@@ -90,3 +90,12 @@ export async function deleteProfile(token, profileId) {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
+
+/** Dahili çıkarım servisleri (Fusion üzerinden, admin JWT gerekli). */
+export async function fetchModelsHealth(token) {
+  const { data } = await axios.get(`${base()}/admin/diagnostics/models-health`, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: Number(import.meta.env.VITE_DIAGNOSTICS_TIMEOUT_MS || 60000),
+  });
+  return data;
+}

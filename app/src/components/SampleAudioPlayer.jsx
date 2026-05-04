@@ -15,7 +15,17 @@ const sampleAudios = [
   { name: 'Test 6', path: test6, fileName: 'test6.wav' },
 ];
 
-const SampleAudioPlayer = ({ onSampleSelect, disabled = false }) => {
+const LABEL_DEFAULTS = {
+  title: 'Örnek sesler',
+  hint: 'Bir örnek seçin; aynı alandan dinleyip analizi başlatabilirsiniz.',
+  listAria: 'Örnek ses listesi',
+  analyzeSep: '— Analiz et',
+  fetchError: 'Örnek ses dosyası yüklenirken bir hata oluştu.',
+  noAudio: 'Tarayıcınız ses oynatmayı desteklemiyor.',
+};
+
+const SampleAudioPlayer = ({ onSampleSelect, disabled = false, labels: labelsProp }) => {
+  const labels = { ...LABEL_DEFAULTS, ...labelsProp };
   const [active, setActive] = useState(sampleAudios[0]);
 
   const handleSelect = async (audio) => {
@@ -23,24 +33,25 @@ const SampleAudioPlayer = ({ onSampleSelect, disabled = false }) => {
     try {
       const response = await fetch(audio.path);
       const blob = await response.blob();
-      const type = blob.type && blob.type !== 'application/octet-stream'
-        ? blob.type
-        : (audio.fileName.endsWith('.m4a') ? 'audio/mp4' : 'audio/wav');
+      const type =
+        blob.type && blob.type !== 'application/octet-stream'
+          ? blob.type
+          : audio.fileName.endsWith('.m4a')
+            ? 'audio/mp4'
+            : 'audio/wav';
       const file = new File([blob], audio.fileName, { type });
       onSampleSelect(file, audio.name);
     } catch (error) {
       console.error('Error fetching the audio sample:', error);
-      alert('Örnek ses dosyası yüklenirken bir hata oluştu.');
+      alert(labels.fetchError);
     }
   };
 
   return (
     <div className={`card card-sample${disabled ? ' card-disabled' : ''}`}>
-      <h2>Örnek sesler</h2>
-      <p className="sample-picker-hint">
-        Bir örnek seçin; aynı alandan dinleyip analizi başlatabilirsiniz.
-      </p>
-      <div className="sample-chip-grid" role="listbox" aria-label="Örnek ses listesi">
+      <h2>{labels.title}</h2>
+      <p className="sample-picker-hint">{labels.hint}</p>
+      <div className="sample-chip-grid" role="listbox" aria-label={labels.listAria}>
         {sampleAudios.map((audio) => {
           const isActive = active.fileName === audio.fileName;
           return (
@@ -66,7 +77,7 @@ const SampleAudioPlayer = ({ onSampleSelect, disabled = false }) => {
           src={active.path}
           preload="metadata"
         >
-          Tarayıcınız ses oynatmayı desteklemiyor.
+          {labels.noAudio}
         </audio>
         <button
           type="button"
@@ -74,7 +85,7 @@ const SampleAudioPlayer = ({ onSampleSelect, disabled = false }) => {
           disabled={disabled}
           onClick={() => handleSelect(active)}
         >
-          {active.name} — Analiz et
+          {active.name} {labels.analyzeSep}
         </button>
       </div>
     </div>

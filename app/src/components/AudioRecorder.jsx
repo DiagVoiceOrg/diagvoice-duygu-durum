@@ -2,11 +2,33 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RecordPlugin from 'wavesurfer.js/dist/plugins/record.esm.js';
 
-const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
+const MIC_DENIED_DEFAULT =
+  'Mikrofon erişimi reddedildi veya bir hata oluştu.';
+
+const LABEL_DEFAULTS = {
+  title: 'Mikrofon kaydı',
+  start: 'Kaydı Başlat',
+  stop: 'Kaydı Durdur',
+  play: 'Oynat',
+  pause: 'Durdur',
+};
+
+const AudioRecorder = ({
+  onRecordingComplete,
+  disabled = false,
+  micDeniedMessage,
+  labels: labelsProp,
+}) => {
+  const labels = { ...LABEL_DEFAULTS, ...labelsProp };
+  const denyMsg =
+    micDeniedMessage !== undefined && micDeniedMessage !== null
+      ? micDeniedMessage
+      : MIC_DENIED_DEFAULT;
+
   const waveContainerRef = useRef(null);
   const wavesurferRef = useRef(null);
   const recordPluginRef = useRef(null);
-  
+
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioUrl, setAudioUrl] = useState('');
@@ -32,8 +54,10 @@ const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
     if (disabled) return;
     setAudioUrl('');
     wavesurferRef.current = createWaveSurfer();
-    
-    const record = wavesurferRef.current.registerPlugin(RecordPlugin.create({ scrollingWaveform: true }));
+
+    const record = wavesurferRef.current.registerPlugin(
+      RecordPlugin.create({ scrollingWaveform: true }),
+    );
     recordPluginRef.current = record;
 
     record.on('record-end', (blob) => {
@@ -43,20 +67,19 @@ const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
       record.destroy();
       wavesurferRef.current.load(url);
     });
-    
-    // Make the record plugin listen to the progress of the wavesurfer
+
     wavesurferRef.current.on('timeupdate', (currentTime) => {
-        if(isRecording) record.render(currentTime)
+      if (isRecording) record.render(currentTime);
     });
 
     try {
       await record.startRecording();
       setIsRecording(true);
-    } catch(e) {
+    } catch (e) {
       console.error('Error starting recording:', e);
-      alert('Mikrofon erişimi reddedildi veya bir hata oluştu.');
+      alert(denyMsg);
     }
-  }, [createWaveSurfer, onRecordingComplete, isRecording, disabled]);
+  }, [createWaveSurfer, onRecordingComplete, isRecording, disabled, denyMsg]);
 
   const stopRecording = useCallback(() => {
     if (recordPluginRef.current) {
@@ -64,13 +87,13 @@ const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
       setIsRecording(false);
     }
   }, []);
-  
+
   const handlePlayPause = () => {
-      if(wavesurferRef.current) {
-          wavesurferRef.current.playPause();
-          setIsPlaying(wavesurferRef.current.isPlaying());
-      }
-  }
+    if (wavesurferRef.current) {
+      wavesurferRef.current.playPause();
+      setIsPlaying(wavesurferRef.current.isPlaying());
+    }
+  };
 
   useEffect(() => {
     if (wavesurferRef.current) {
@@ -81,21 +104,21 @@ const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
 
   return (
     <div className={`card card-recorder${disabled ? ' card-disabled' : ''}`}>
-      <h2>Mikrofon kaydı</h2>
+      <h2>{labels.title}</h2>
       <div ref={waveContainerRef} className="waveform-container"></div>
       <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
         {!isRecording ? (
           <button onClick={startRecording} disabled={isRecording || disabled}>
-            Kaydı Başlat
+            {labels.start}
           </button>
         ) : (
           <button onClick={stopRecording} disabled={!isRecording || disabled}>
-            Kaydı Durdur
+            {labels.stop}
           </button>
         )}
         {audioUrl && !isRecording && (
           <button onClick={handlePlayPause} className="secondary" disabled={disabled}>
-            {isPlaying ? 'Durdur' : 'Oynat'}
+            {isPlaying ? labels.pause : labels.play}
           </button>
         )}
       </div>

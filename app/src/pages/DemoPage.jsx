@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import DemoHome from '../demo/DemoHome';
+import {
+  demoT,
+  normalizeDemoLang,
+  readStoredDemoLang,
+  syncDocumentDemoLang,
+  writeStoredDemoLang,
+} from '../i18n/demoUi';
 import { getPublicPageBySlug, listPublicPages } from '../services/cmsApi';
+
+/** Slug yayında değil (çok dilli görüntüleme için sabit kod) */
+const ERR_CMS404 = '__diagvoice_err_cms404__';
+/** CMS uyarısı: ana sayfa / genel yükleme hatası */
+const WARN_CMS_HOME = '__diagvoice_warn_cms_home__';
+const WARN_CMS_PAGE = '__diagvoice_warn_cms_page__';
 
 /** React route `/:slug` → CMS slug (örn. depresyon-emosyon → /depresyon-emosyon) */
 export function routeParamToCmsSlug(slugParam) {
@@ -20,6 +33,18 @@ export default function DemoPage() {
   const [pageTitle, setPageTitle] = useState('');
   const [cmsWarning, setCmsWarning] = useState(null);
   const [pageError, setPageError] = useState(null);
+  const [demoLang, setDemoLangState] = useState(() => readStoredDemoLang());
+
+  useEffect(() => {
+    syncDocumentDemoLang(demoLang);
+  }, [demoLang]);
+
+  const setDemoLang = (lng) => {
+    const n = normalizeDemoLang(lng);
+    writeStoredDemoLang(n);
+    setDemoLangState(n);
+    syncDocumentDemoLang(n);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +67,7 @@ export default function DemoPage() {
       } catch (e) {
         if (cancelled) return;
         if (e.response?.status === 404) {
-          setPageError('Bu slug için yayımlanmış bir sayfa yok. Admin’den slug ve “Yayında” alanını kontrol et.');
+          setPageError(ERR_CMS404);
           setProfileCards(null);
           setPageTitle('');
         } else {
@@ -50,11 +75,7 @@ export default function DemoPage() {
           setProfileCards(null);
           setPageTitle('');
           setPageError(null);
-          setCmsWarning(
-            cmsSlug === '/'
-              ? 'Demo ayarları yüklenemedi (CMS kapalı olabilir); varsayılan kart sırası kullanılıyor.'
-              : 'Sayfa ayarları yüklenemedi; varsayılan davranış kullanılıyor.',
-          );
+          setCmsWarning(cmsSlug === '/' ? WARN_CMS_HOME : WARN_CMS_PAGE);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -65,10 +86,21 @@ export default function DemoPage() {
     };
   }, [cmsSlug]);
 
+  const cmsBannerText =
+    cmsWarning === null
+      ? null
+      : cmsWarning === WARN_CMS_HOME
+        ? demoT(demoLang, 'cmsWarnHome')
+        : cmsWarning === WARN_CMS_PAGE
+          ? demoT(demoLang, 'cmsWarnPage')
+          : cmsWarning;
+
+  const pageErrorText = pageError === ERR_CMS404 ? demoT(demoLang, 'cms404Error') : pageError;
+
   if (loading) {
     return (
-      <div className="app-container" style={{ padding: '2rem', textAlign: 'center' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Sayfa yükleniyor…</p>
+      <div className={`app-container${demoLang === 'ar' ? ' demo-rtl' : ''}`} style={{ padding: '2rem', textAlign: 'center' }}>
+        <p style={{ color: 'var(--text-muted)' }}>{demoT(demoLang, 'pageLoading')}</p>
       </div>
     );
   }
@@ -78,8 +110,10 @@ export default function DemoPage() {
       navPages={navPages}
       pageTitle={pageTitle}
       profileCards={profileCards}
-      cmsWarning={cmsWarning}
-      pageError={pageError}
+      cmsWarning={cmsBannerText}
+      pageError={pageErrorText}
+      demoLang={demoLang}
+      onDemoLangChange={setDemoLang}
     />
   );
 }

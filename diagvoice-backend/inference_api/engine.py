@@ -21,6 +21,8 @@ DEFAULT_MODEL = MODELS_DIR / "model.joblib"
 DEFAULT_CONFIG = APP_DIR / "config.yaml"
 
 ROOT = APP_DIR.parent
+# Repo: diagvoice-backend/models/is-sagligi.joblib — Docker: /app/models/is-sagligi.joblib
+REPO_MODEL_IS_SAGLIGI = ROOT / "models" / "is-sagligi.joblib"
 _CODE = ROOT / "code"
 
 _bundle: dict[str, Any] | None = None
@@ -79,11 +81,13 @@ def resolve_model_path() -> Path:
         if not p.is_file():
             raise FileNotFoundError(f"DIAGVOICE_MODEL bulunamadı: {p}")
         return p
+    if REPO_MODEL_IS_SAGLIGI.is_file():
+        return REPO_MODEL_IS_SAGLIGI
     if DEFAULT_MODEL.is_file():
         return DEFAULT_MODEL
     raise FileNotFoundError(
-        f"Varsayılan model yok: {DEFAULT_MODEL}. "
-        f"model.joblib koyun veya DIAGVOICE_MODEL ile yol verin."
+        f"iş sağlığı (benchmark) modeli bulunamadı. Beklenen: {REPO_MODEL_IS_SAGLIGI}; "
+        f"alternatif: {DEFAULT_MODEL}. DIAGVOICE_MODEL ile tam yol da verebilirsiniz."
     )
 
 

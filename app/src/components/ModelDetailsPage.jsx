@@ -1,4 +1,9 @@
 import React from 'react';
+import {
+  demoT,
+  genderUiLabel,
+  normalizeDemoLang,
+} from '../i18n/demoUi';
 
 function formatPct01(v, digits = 0) {
   if (typeof v !== 'number' || Number.isNaN(v)) return null;
@@ -31,20 +36,23 @@ function ProbBarRow({ label, value, color }) {
   );
 }
 
-const GENDER_LABELS = {
-  male: { tr: 'Erkek', color: '#3b82f6' },
-  female: { tr: 'Kadın', color: '#ec4899' },
+const GENDER_COLOR = {
+  male: '#3b82f6',
+  female: '#ec4899',
 };
 const AGEBIN_LABELS = ['15-24', '25-34', '35-44', '45-54', '55-64'];
-const AGE_DISPLAY_SHIFT_BINS = 1; // UI'da bir kademe daha genç göster
+const AGE_DISPLAY_SHIFT_BINS = 1;
 
 export default function ModelDetailsPage({
+  demoLang = 'tr',
   audioEmotionResult,
   ageGenderResult,
   ageGenderError,
   valenceResult,
   confidenceResult,
 }) {
+  const lang = normalizeDemoLang(demoLang);
+
   const gender = ageGenderResult?.gender;
   const agebin = ageGenderResult?.agebin;
 
@@ -71,27 +79,43 @@ export default function ModelDetailsPage({
   const dynamicFusion = confidenceResult?.dynamic_fusion;
 
   const fusedAccentColor =
-    fusedLabel?.toLowerCase() === 'positive' ? '#10b981' : fusedLabel?.toLowerCase() === 'negative' ? '#ef4444' : '#6b7280';
-  const emotionLabels = ['Üzüntü', 'Korku', 'Mutluluk', 'Öfke'];
+    fusedLabel?.toLowerCase() === 'positive'
+      ? '#10b981'
+      : fusedLabel?.toLowerCase() === 'negative'
+        ? '#ef4444'
+        : '#6b7280';
+  const emotionLabels = [
+    demoT(lang, 'emotionSadness'),
+    demoT(lang, 'emotionFear'),
+    demoT(lang, 'emotionHappiness'),
+    demoT(lang, 'emotionAnger'),
+  ];
   const emotionColors = ['#6366f1', '#8b5cf6', '#10b981', '#ef4444'];
 
+  const classLabelForIndex = (idx) =>
+    demoT(lang, 'classN', {
+      n: String(idx + 1),
+    });
+
   const renderEmotionDistribution = () => {
-    if (!Array.isArray(audioEmotionResult?.probs) || audioEmotionResult.probs.length === 0) return null;
+    if (!Array.isArray(audioEmotionResult?.probs) || audioEmotionResult.probs.length === 0) {
+      return null;
+    }
 
     return (
       <div className="card health-card" style={{ paddingTop: 18 }}>
         <div className="card-header">
           <div className="fusion-indicator" />
-          <h2>Ses Duygusu (Emosyon) - Olasılık Dağılımı</h2>
+          <h2>{demoT(lang, 'mdEmotionDistrib')}</h2>
         </div>
         <div className="profile-confidence" style={{ marginBottom: '0.75rem' }}>
-          Kaynak: Ses Duygusu (Emosyon) modelinin sınıf bazlı olasılık çıktıları
+          {demoT(lang, 'mdEmotionDistribSrc')}
         </div>
         <div className="prob-section">
           {audioEmotionResult.probs.map((prob, idx) => (
             <ProbBarRow
-              key={`${emotionLabels[idx] || `Sınıf ${idx + 1}`}-${idx}`}
-              label={emotionLabels[idx] || `Sınıf ${idx + 1}`}
+              key={`${emotionLabels[idx] || classLabelForIndex(idx)}-${idx}`}
+              label={emotionLabels[idx] || classLabelForIndex(idx)}
               value={prob}
               color={emotionColors[idx] || '#94a3b8'}
             />
@@ -108,23 +132,27 @@ export default function ModelDetailsPage({
     const genderPredId = typeof gender?.pred_id === 'number' ? gender.pred_id : null;
     const agebinPredId = typeof agebin?.pred_id === 'number' ? agebin.pred_id : null;
 
-    const genderColor =
-      genderPred && GENDER_LABELS[genderPred] ? GENDER_LABELS[genderPred].color : '#3b82f6';
+    const genderColor = genderPred && GENDER_COLOR[genderPred] ? GENDER_COLOR[genderPred] : '#3b82f6';
 
     const agebinColor = '#f59e0b';
-    const trGender = (label) => GENDER_LABELS[label]?.tr || label || '-';
+    const trGender = (label) => genderUiLabel(lang, label);
     const oppositeGender =
       genderPred === 'female' ? 'male' : genderPred === 'male' ? 'female' : null;
 
     const getGenderLabelByIndex = (idx) => {
       if (genderPredId !== null && idx === genderPredId) return trGender(genderPred);
-      if (Array.isArray(gender?.probs) && gender.probs.length === 2 && oppositeGender) return trGender(oppositeGender);
-      return `Sınıf ${idx + 1}`;
+      if (Array.isArray(gender?.probs) && gender.probs.length === 2 && oppositeGender) {
+        return trGender(oppositeGender);
+      }
+      return classLabelForIndex(idx);
     };
 
     const getAgebinLabelByIndex = (idx) => {
-      const shiftedIdx = Math.max(0, Math.min(AGEBIN_LABELS.length - 1, idx - AGE_DISPLAY_SHIFT_BINS));
-      return AGEBIN_LABELS[shiftedIdx] || `Sınıf ${shiftedIdx + 1}`;
+      const shiftedIdx = Math.max(
+        0,
+        Math.min(AGEBIN_LABELS.length - 1, idx - AGE_DISPLAY_SHIFT_BINS),
+      );
+      return AGEBIN_LABELS[shiftedIdx] || classLabelForIndex(shiftedIdx);
     };
     const agebinPredDisplay = (() => {
       if (agebinPredId !== null) return getAgebinLabelByIndex(agebinPredId);
@@ -137,33 +165,37 @@ export default function ModelDetailsPage({
       <div className="card wellness-card">
         <div className="card-header">
           <div className="profile-indicator" style={{ background: '#f59e0b' }} />
-          <h2>Yaş & Cinsiyet</h2>
+          <h2>{demoT(lang, 'mdAgeGender')}</h2>
         </div>
 
-        {ageGenderError && <div className="error" style={{ marginBottom: '1rem' }}>{ageGenderError}</div>}
+        {ageGenderError && (
+          <div className="error" style={{ marginBottom: '1rem' }}>
+            {ageGenderError}
+          </div>
+        )}
 
         {gender && (
           <div className="profile-grid">
             <div className="profile-item">
-              <div className="profile-label">Cinsiyet Tahmini</div>
+              <div className="profile-label">{demoT(lang, 'mdGenderGuess')}</div>
               <div className="profile-value" style={{ color: genderColor }}>
-                {GENDER_LABELS[gender.pred_label]?.tr || gender.pred_label}
+                {genderUiLabel(lang, gender.pred_label)}
               </div>
               {typeof genderBest.value === 'number' && (
                 <div className="profile-confidence">
-                  Güven: {formatPct01(genderBest.value, 0)}
+                  {demoT(lang, 'confidenceBadge')}: {formatPct01(genderBest.value, 0)}
                 </div>
               )}
             </div>
 
             <div className="profile-item">
-              <div className="profile-label">Yaş Grubu Tahmini</div>
+              <div className="profile-label">{demoT(lang, 'mdAgeGroupGuess')}</div>
               <div className="profile-value" style={{ color: agebinColor }}>
                 {agebinPredDisplay}
               </div>
               {typeof agebinBest.value === 'number' && (
                 <div className="profile-confidence">
-                  Güven: {formatPct01(agebinBest.value, 0)}
+                  {demoT(lang, 'confidenceBadge')}: {formatPct01(agebinBest.value, 0)}
                 </div>
               )}
             </div>
@@ -171,7 +203,7 @@ export default function ModelDetailsPage({
         )}
 
         <div className="prob-section">
-          <h4>Dağılım (Olasılıklar)</h4>
+          <h4>{demoT(lang, 'mdDistribution')}</h4>
           {Array.isArray(gender?.probs) && gender.probs.length > 0 && (
             <>
               <ProbBarRow
@@ -214,23 +246,45 @@ export default function ModelDetailsPage({
     const hasAnyValence = valenceText !== null || valenceAudio !== null || fusedValence !== null;
     if (!hasAnyValence) return null;
 
+    const fusedDisplay = fusedLabel
+      ? fusedLabel.charAt(0).toUpperCase() + fusedLabel.slice(1).toLowerCase()
+      : '-';
+
     return (
       <div className="card fusion-result">
         <div>
-          <div className={`fusion-label ${fusedLabel?.toLowerCase() === 'positive' ? 'positive' : fusedLabel?.toLowerCase() === 'negative' ? 'negative' : 'neutral'}`}>
-            Fused Duygu: {fusedLabel ? fusedLabel[0] + fusedLabel.slice(1).toLowerCase() : '-'}
+          <div
+            className={`fusion-label ${
+              fusedLabel?.toLowerCase() === 'positive'
+                ? 'positive'
+                : fusedLabel?.toLowerCase() === 'negative'
+                  ? 'negative'
+                  : 'neutral'
+            }`}
+          >
+            {demoT(lang, 'fusedEmotionPrefix')} {fusedDisplay}
           </div>
           <div className="fusion-confidence">
-            {typeof fusedValence === 'number' ? `Valence: ${(fusedValence * 100).toFixed(1)}%` : 'Valence hesaplanamadı'}
+            {typeof fusedValence === 'number'
+              ? demoT(lang, 'valencePct', { p: `${(fusedValence * 100).toFixed(1)}` })
+              : demoT(lang, 'valenceUnavailable')}
           </div>
-          {typeof fused?.w_text === 'number' && <div className="fusion-confidence">Metin ağırlığı: {Math.round(fused.w_text * 100)}%</div>}
+          {typeof fused?.w_text === 'number' && (
+            <div className="fusion-confidence">
+              {demoT(lang, 'textWeight', { p: `${Math.round(fused.w_text * 100)}` })}
+            </div>
+          )}
         </div>
 
         <div style={{ width: 160 }}>
           <div className="source-bar-container" style={{ height: 14, borderRadius: 10, marginBottom: 8 }}>
             <div
               className="source-fill"
-              style={{ width: `${typeof fusedValence === 'number' ? fusedValence * 100 : 0}%`, background: fusedAccentColor, height: '100%' }}
+              style={{
+                width: `${typeof fusedValence === 'number' ? fusedValence * 100 : 0}%`,
+                background: fusedAccentColor,
+                height: '100%',
+              }}
             />
           </div>
           <div className="source-value" style={{ textAlign: 'right' }}>
@@ -247,17 +301,17 @@ export default function ModelDetailsPage({
       <div className="card health-card" style={{ paddingTop: 18 }}>
         <div className="card-header">
           <div className="fusion-indicator" />
-          <h2>Ses Duygusu (Emosyon) - Metin vs Ses Valence</h2>
+          <h2>{demoT(lang, 'mdValenceCompare')}</h2>
         </div>
         <div className="profile-confidence" style={{ marginBottom: '0.75rem' }}>
-          Kaynak: metin duygu analizi + ses emosyonundan hesaplanan valence karşılaştırması
+          {demoT(lang, 'mdValenceCompareSrc')}
         </div>
         <div className="prob-section">
           {valenceText !== null && (
-            <ProbBarRow label="Metin" value={valenceText} color="#3b82f6" />
+            <ProbBarRow label={demoT(lang, 'labelTextShort')} value={valenceText} color="#3b82f6" />
           )}
           {valenceAudio !== null && (
-            <ProbBarRow label="Ses" value={valenceAudio} color="#8b5cf6" />
+            <ProbBarRow label={demoT(lang, 'labelAudioShort')} value={valenceAudio} color="#8b5cf6" />
           )}
         </div>
       </div>
@@ -275,36 +329,36 @@ export default function ModelDetailsPage({
       <div className="card health-card">
         <div className="card-header">
           <div className="fusion-indicator" />
-          <h2>Ses Duygusu (Emosyon) - Güven & Dinamik Füzyon</h2>
+          <h2>{demoT(lang, 'mdFusionConfTitle')}</h2>
         </div>
         <div className="profile-confidence" style={{ marginBottom: '0.75rem' }}>
-          Kaynak: "Ses Duygusu (Emosyon)" + metin duygu analizi birleştirme
+          {demoT(lang, 'mdFusionConfSrc')}
         </div>
 
         <div className="profile-grid">
           <div className="profile-item">
-            <div className="profile-label">Metin Güveni</div>
+            <div className="profile-label">{demoT(lang, 'confTextLbl')}</div>
             <div className="profile-value">{formatPct01(confidenceText, 0) || '-'}</div>
-            <div className="profile-confidence">Valence_text’e göre</div>
+            <div className="profile-confidence">{demoT(lang, 'confTextSub')}</div>
           </div>
           <div className="profile-item">
-            <div className="profile-label">Ses Güveni</div>
+            <div className="profile-label">{demoT(lang, 'confAudioLbl')}</div>
             <div className="profile-value">{formatPct01(confidenceAudio, 0) || '-'}</div>
-            <div className="profile-confidence">Audio entropy’ya göre</div>
+            <div className="profile-confidence">{demoT(lang, 'confAudioSub')}</div>
           </div>
         </div>
 
         <div className="prob-section">
-          <h4>Uyumsuzluk & Model Ayarı</h4>
+          <h4>{demoT(lang, 'mdMismatchHeading')}</h4>
           {typeof disagreement === 'number' && (
             <div className="result-row">
-              <span className="result-label">Disagreement</span>
+              <span className="result-label">{demoT(lang, 'disagreementLbl')}</span>
               <span className="result-value">{disagreement.toFixed(3)}</span>
             </div>
           )}
           <div className="result-row">
-            <span className="result-label">Dynamic Fusion</span>
-            <span className="result-value">{dynamicFusion ? 'Açık' : 'Kapalı'}</span>
+            <span className="result-label">{demoT(lang, 'dynamicFusionLbl')}</span>
+            <span className="result-value">{dynamicFusion ? demoT(lang, 'on') : demoT(lang, 'off')}</span>
           </div>
         </div>
       </div>
@@ -321,4 +375,3 @@ export default function ModelDetailsPage({
     </div>
   );
 }
-

@@ -1,6 +1,17 @@
 import { useState, useEffect } from 'react';
 
-const AudioFilePicker = ({ onFileSelect, disabled = false }) => {
+const LABEL_DEFAULTS = {
+  title: 'Bilgisayardan ses',
+  selected: 'Seçilen',
+  noAudio: 'Tarayıcınız ses oynatmayı desteklemiyor.',
+};
+
+const AudioFilePicker = ({
+  onFileSelect,
+  disabled = false,
+  labels: labelsProp,
+}) => {
+  const labels = { ...LABEL_DEFAULTS, ...labelsProp };
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -27,12 +38,12 @@ const AudioFilePicker = ({ onFileSelect, disabled = false }) => {
 
   return (
     <div className={`card card-file-picker${disabled ? ' card-disabled' : ''}`}>
-      <h2>Bilgisayardan ses</h2>
+      <h2>{labels.title}</h2>
       <input type="file" accept="audio/*" onChange={handleChange} disabled={disabled} />
       {selectedFile && (
         <>
           <div className="result-row" style={{ borderBottom: 'none', paddingTop: '0.75rem' }}>
-            <span className="result-label">Seçilen</span>
+            <span className="result-label">{labels.selected}</span>
             <span className="result-value">{selectedFile.name}</span>
           </div>
           {previewUrl && (
@@ -43,7 +54,7 @@ const AudioFilePicker = ({ onFileSelect, disabled = false }) => {
                 src={previewUrl}
                 preload="metadata"
               >
-                Tarayıcınız ses oynatmayı desteklemiyor.
+                {labels.noAudio}
               </audio>
             </div>
           )}

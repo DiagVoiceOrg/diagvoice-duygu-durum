@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { analyzeFused } from './analyzeFused';
+import { analyzeFused, normalizeSpeechLanguageForStt } from './analyzeFused';
 import { CARD_IDS, resolveCardOrder } from '../lib/cardCopy';
 import { getFusionOrigin } from './fusionOrigin';
 
@@ -29,9 +29,13 @@ function buildFormDataWithTranscript(audioData, transcript) {
   return fd;
 }
 
-async function postMultipart(path, audioData) {
+async function postMultipart(path, audioData, speechLanguage) {
+  const fd = buildFormData(audioData);
+  if (path === '/analyze-voice-to-text' && speechLanguage != null && speechLanguage !== '') {
+    fd.append('speech_language', normalizeSpeechLanguageForStt(speechLanguage));
+  }
   const origin = getFusionOrigin();
-  const { data } = await axios.post(`${origin}${path}`, buildFormData(audioData), {
+  const { data } = await axios.post(`${origin}${path}`, fd, {
     timeout: Number.isFinite(API_TIMEOUT_MS) ? API_TIMEOUT_MS : 600000,
     maxBodyLength: Infinity,
     maxContentLength: Infinity,
@@ -82,14 +86,16 @@ function needsVoiceToText(uniqueIds) {
  *
  * @param {Blob|File} audioData
  * @param {Array<{ id: string }>|null|undefined} profileCards
+ * @param {string} [speechLanguage] Demo UI kodu tr|en|ar → Whisper diline proxy’den iletilir
  * @returns {Promise<Record<string, unknown>>} analyze-fused ile uyumlu gövde
  */
-export async function analyzeByProfileCards(audioData, profileCards) {
+export async function analyzeByProfileCards(audioData, profileCards, speechLanguage = 'tr') {
+  const sttLang = normalizeSpeechLanguageForStt(speechLanguage);
   const ordered = resolveCardOrder(profileCards);
   const uniqueIds = [...new Set(ordered.filter((id) => id && KNOWN_CARD_IDS.has(id)))];
 
   if (uniqueIds.length === 0 || shouldUseAnalyzeFused(uniqueIds)) {
-    return analyzeFused(audioData);
+    return analyzeFused(audioData, sttLang);
   }
 
   let sttText = null;
@@ -113,7 +119,7 @@ export async function analyzeByProfileCards(audioData, profileCards) {
 
   if (sttNeeded) {
     phase1.push(
-      postMultipart('/analyze-voice-to-text', audioData)
+      postMultipart('/analyze-voice-to-text', audioData, sttLang)
         .then((d) => {
           sttText = typeof d?.text === 'string' ? d.text : '';
         })

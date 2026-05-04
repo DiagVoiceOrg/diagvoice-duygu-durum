@@ -10,6 +10,13 @@ import { analyzeByProfileCards } from '../services/analyzePartial';
 import logo from '../logo.jpg';
 import ModelDetailsPage from '../components/ModelDetailsPage';
 import { mergeCardCopy, resolveCardOrder } from '../lib/cardCopy';
+import {
+  DEMO_LANGS,
+  demoT,
+  depressionRiskUiLabel,
+  emotionUiLabel,
+  normalizeDemoLang,
+} from '../i18n/demoUi';
 
 function ProbBar({ label, value, color }) {
   const percentage = Math.round(value * 100);
@@ -27,28 +34,23 @@ function ProbBar({ label, value, color }) {
   );
 }
 
-const EMOTION_LABELS = {
-  sadness: { tr: 'Üzüntü', color: '#6366f1' },
-  fear: { tr: 'Korku', color: '#8b5cf6' },
-  happiness: { tr: 'Mutluluk', color: '#10b981' },
-  anger: { tr: 'Öfke', color: '#ef4444' },
-  happy: { tr: 'Mutlu', color: '#10b981' },
-  sad: { tr: 'Üzgün', color: '#6366f1' },
-  angry: { tr: 'Sinirli', color: '#ef4444' },
-  fearful: { tr: 'Korkulu', color: '#8b5cf6' },
+const EMOTION_COLORS = {
+  sadness: '#6366f1',
+  fear: '#8b5cf6',
+  happiness: '#10b981',
+  anger: '#ef4444',
+  happy: '#10b981',
+  sad: '#6366f1',
+  angry: '#ef4444',
+  fearful: '#8b5cf6',
 };
 
-function getEmotionLabel(pred_label) {
-  return EMOTION_LABELS[pred_label]?.tr || pred_label;
-}
-
 function getEmotionColor(pred_label) {
-  return EMOTION_LABELS[pred_label]?.color || '#6b7280';
+  return EMOTION_COLORS[pred_label] || '#6b7280';
 }
 
 const BENCHMARK_POSITIVE_UI_THRESHOLD = 0.5;
 
-const DEPRESSION_RISK_TR = { dusuk: 'Düşük', orta: 'Orta', yuksek: 'Yüksek' };
 const DEPRESSION_RISK_COLOR = { dusuk: '#10b981', orta: '#f59e0b', yuksek: '#ef4444' };
 
 /** CMS’deki slug → React Router path (tek segment). */
@@ -65,7 +67,11 @@ export default function DemoHome({
   navPages = [],
   pageTitle = '',
   pageError = null,
+  demoLang = 'tr',
+  onDemoLangChange = () => {},
 }) {
+  const lang = normalizeDemoLang(demoLang);
+
   const [isLoading, setIsLoading] = useState(false);
   const [transcribedText, setTranscribedText] = useState('');
   const [sentimentResult, setSentimentResult] = useState({ sentiment: null, score: null });
@@ -101,7 +107,7 @@ export default function DemoHome({
     setCurrentAnalysisSource(sourceName);
 
     try {
-      const result = await analyzeByProfileCards(audioBlob, profileCards);
+      const result = await analyzeByProfileCards(audioBlob, profileCards, lang);
       setTranscribedText(result.text || '');
 
       if (result.text_sentiment) {
@@ -153,9 +159,9 @@ export default function DemoHome({
         setBenchmarkV2Error(result.benchmark_v2_error);
       }
     } catch (err) {
-      const errorMessage = err.message || 'Bilinmeyen bir hata oluştu';
+      const errorMessage = err.message || demoT(lang, 'errorUnknown');
       console.error(`Analysis failed for ${sourceName}:`, err);
-      setError(`"${sourceName}" analizi sırasında bir hata oluştu: ${errorMessage}`);
+      setError(demoT(lang, 'errorAnalyzing', { source: sourceName, message: errorMessage }));
     } finally {
       setIsLoading(false);
     }
@@ -198,10 +204,10 @@ export default function DemoHome({
                   className="result-highlight"
                   style={{ color: getEmotionColor(audioEmotionResult.pred_label) }}
                 >
-                  {getEmotionLabel(audioEmotionResult.pred_label)}
+                  {emotionUiLabel(lang, audioEmotionResult.pred_label)}
                 </span>
                 <span className="confidence-badge">
-                  Güven: {Math.round((audioEmotionResult.intensity || 0) * 100)}%
+                  {demoT(lang, 'confidenceBadge')}: {Math.round((audioEmotionResult.intensity || 0) * 100)}%
                 </span>
               </div>
             </CardChrome>
@@ -224,12 +230,22 @@ export default function DemoHome({
                 <span
                   className={`result-highlight ${diseaseResult.pred_label === 'healthy' ? 'healthy-text' : 'sick-text'}`}
                 >
-                  {diseaseResult.pred_label === 'healthy' ? 'Sağlıklı' : 'Hasta'}
+                  {diseaseResult.pred_label === 'healthy'
+                    ? demoT(lang, 'diseaseHealthy')
+                    : demoT(lang, 'diseaseSick')}
                 </span>
               </div>
               <div className="prob-section compact">
-                <ProbBar label="Sağlıklı" value={diseaseResult.probs?.[0] || 0} color="#10b981" />
-                <ProbBar label="Hasta" value={diseaseResult.probs?.[1] || 0} color="#ef4444" />
+                <ProbBar
+                  label={demoT(lang, 'probHealthy')}
+                  value={diseaseResult.probs?.[0] || 0}
+                  color="#10b981"
+                />
+                <ProbBar
+                  label={demoT(lang, 'probSick')}
+                  value={diseaseResult.probs?.[1] || 0}
+                  color="#ef4444"
+                />
               </div>
             </CardChrome>
           </div>
@@ -279,14 +295,14 @@ export default function DemoHome({
                         <span
                           className={`result-highlight ${uiTanili ? 'sick-text' : 'healthy-text'}`}
                         >
-                          {uiTanili ? 'Tanılı riski' : 'Sağlıklı profil'}
+                          {uiTanili ? demoT(lang, 'diagRiskUi') : demoT(lang, 'diagHealthyProf')}
                         </span>
                         <span className="confidence-badge">
-                          Eşik: %{Math.round(BENCHMARK_POSITIVE_UI_THRESHOLD * 100)}
+                          {demoT(lang, 'thresholdLabel')}: %{Math.round(BENCHMARK_POSITIVE_UI_THRESHOLD * 100)}
                         </span>
                       </div>
                       <div className="score-section">
-                        <div className="score-label">P(tanılı)</div>
+                        <div className="score-label">{demoT(lang, 'pDiagLabel')}</div>
                         <div className="score-bar-container">
                           <div
                             className="score-bar"
@@ -301,7 +317,7 @@ export default function DemoHome({
                       </div>
                       {benchmarkV2Result.mode && (
                         <div className="profile-confidence" style={{ marginTop: '0.5rem' }}>
-                          Model modu: {benchmarkV2Result.mode}
+                          {demoT(lang, 'modelModeLabel')}: {benchmarkV2Result.mode}
                         </div>
                       )}
                     </>
@@ -319,13 +335,13 @@ export default function DemoHome({
               <div className="main-result">
                 <span className="result-highlight">
                   {mentalFitnessResult.pred_label === 'healthy'
-                    ? 'Sağlıklı Profil'
-                    : 'Değerlendirme Gerekli'}
+                    ? demoT(lang, 'mentalOk')
+                    : demoT(lang, 'mentalReview')}
                 </span>
               </div>
               {typeof mentalFitnessResult.mental_fitness_score === 'number' && (
                 <div className="score-section">
-                  <div className="score-label">Ses Sağlığı Skoru</div>
+                  <div className="score-label">{demoT(lang, 'vocalHealthScore')}</div>
                   <div className="score-bar-container">
                     <div
                       className="score-bar"
@@ -353,10 +369,12 @@ export default function DemoHome({
         if (!depressionResult) return null;
         {
           const rl = depressionResult.risk_level;
-          const riskTr = (rl && DEPRESSION_RISK_TR[rl]) || '—';
+          const riskLabel = rl ? depressionRiskUiLabel(lang, rl) : '—';
           const riskColor = (rl && DEPRESSION_RISK_COLOR[rl]) || '#6b7280';
           const depressionStatus =
-            depressionResult.pred_label === 'depresyon' ? 'Depresyon Riski' : 'Sağlıklı';
+            depressionResult.pred_label === 'depresyon'
+              ? demoT(lang, 'depRisk')
+              : demoT(lang, 'depOk');
           const showRiskLevel = depressionResult.pred_label === 'depresyon';
           const finalProb =
             typeof depressionResult.final_prob_depression === 'number'
@@ -377,16 +395,16 @@ export default function DemoHome({
                   }}
                 >
                   <span className="result-highlight" style={{ color: riskColor }}>
-                    Durum: {depressionStatus}
+                    {demoT(lang, 'statusPrefix')} {depressionStatus}
                   </span>
                   {showRiskLevel && (
                     <span className="result-highlight" style={{ color: riskColor }}>
-                      Risk seviyesi: {riskTr}
+                      {demoT(lang, 'riskLevelPrefix')} {riskLabel}
                     </span>
                   )}
                   {finalProb !== null && (
                     <div className="score-section" style={{ width: '100%' }}>
-                      <div className="score-label">Skor</div>
+                      <div className="score-label">{demoT(lang, 'scoreLabel')}</div>
                       <div className="score-bar-container">
                         <div
                           className="score-bar"
@@ -426,18 +444,41 @@ export default function DemoHome({
   }
 
   return (
-    <div className="app-container">
+    <div className={`app-container${lang === 'ar' ? ' demo-rtl' : ''}`}>
       <header className="app-header">
-        <img src={logo} alt="DiagVoice Logo" className="logo" />
+        <img src={logo} alt={demoT(lang, 'logoAlt')} className="logo" />
         <div className="brand-name">DiagVoice</div>
         {pageTitle ? <div className="demo-page-title">{pageTitle}</div> : null}
-        <Link className="admin-link" to="/admin">
-          Admin
-        </Link>
+        <div
+          className="app-header-controls"
+          role="toolbar"
+          aria-label={demoT(lang, 'languageSwitchAria')}
+        >
+          <div className="lang-switch" role="group">
+            {DEMO_LANGS.map((L) => (
+              <button
+                key={L.id}
+                type="button"
+                className={`lang-pill-btn${L.id === 'ar' ? ' lang-pill-btn--arabic' : ''}${
+                  lang === L.id ? ' is-active' : ''
+                }`}
+                lang={L.id === 'tr' ? 'tr' : L.id === 'ar' ? 'ar' : 'en'}
+                onClick={() => onDemoLangChange(L.id)}
+                aria-pressed={lang === L.id}
+                aria-label={L.label}
+              >
+                {L.label}
+              </button>
+            ))}
+          </div>
+          <Link className="admin-link" to="/admin">
+            {demoT(lang, 'headerAdmin')}
+          </Link>
+        </div>
       </header>
 
       {navPages.length > 0 ? (
-        <nav className="demo-site-nav" aria-label="Sayfalar">
+        <nav className="demo-site-nav" aria-label={demoT(lang, 'navPagesAria')}>
           {navPages.map((p) => (
             <NavLink
               key={p.id}
@@ -461,7 +502,7 @@ export default function DemoHome({
           type="button"
           disabled={isLoading}
         >
-          Özet
+          {demoT(lang, 'tabSummary')}
         </button>
         <button
           className={`tab-button ${activePage === 'details' ? 'active' : 'secondary'}`}
@@ -469,19 +510,49 @@ export default function DemoHome({
           type="button"
           disabled={isLoading}
         >
-          Model Detayları
+          {demoT(lang, 'tabDetails')}
         </button>
       </div>
 
       <div className={`main-grid${pageError ? ' main-grid-disabled' : ''}`}>
-        <AudioRecorder onRecordingComplete={(blob) => handleAudioAnalysis(blob, 'Yeni Kayıt')} disabled={!!pageError} />
-        <SampleAudioPlayer onSampleSelect={handleAudioAnalysis} disabled={!!pageError} />
-        <AudioFilePicker onFileSelect={handleAudioAnalysis} disabled={!!pageError} />
+        <AudioRecorder
+          micDeniedMessage={demoT(lang, 'recorderMicDenied')}
+          labels={{
+            title: demoT(lang, 'recorderTitle'),
+            start: demoT(lang, 'recorderStart'),
+            stop: demoT(lang, 'recorderStop'),
+            play: demoT(lang, 'recorderPlay'),
+            pause: demoT(lang, 'recorderPause'),
+          }}
+          onRecordingComplete={(blob) => handleAudioAnalysis(blob, demoT(lang, 'sourceNewRecording'))}
+          disabled={!!pageError}
+        />
+        <SampleAudioPlayer
+          onSampleSelect={handleAudioAnalysis}
+          disabled={!!pageError}
+          labels={{
+            title: demoT(lang, 'sampleTitle'),
+            hint: demoT(lang, 'sampleHint'),
+            listAria: demoT(lang, 'sampleListAria'),
+            analyzeSep: demoT(lang, 'sampleAnalyzeSep'),
+            fetchError: demoT(lang, 'sampleLoadError'),
+            noAudio: demoT(lang, 'browserNoAudio'),
+          }}
+        />
+        <AudioFilePicker
+          onFileSelect={handleAudioAnalysis}
+          disabled={!!pageError}
+          labels={{
+            title: demoT(lang, 'filePickTitle'),
+            selected: demoT(lang, 'fileSelected'),
+            noAudio: demoT(lang, 'browserNoAudio'),
+          }}
+        />
       </div>
 
       {isLoading && (
         <div className="loading">
-          &quot;{currentAnalysisSource}&quot; için analiz yapılıyor… Lütfen bekleyin.
+          {demoT(lang, 'loadingAnalyzing', { source: `"${currentAnalysisSource}"` })}
         </div>
       )}
 
@@ -492,6 +563,7 @@ export default function DemoHome({
 
         {activePage === 'details' && (
           <ModelDetailsPage
+            demoLang={lang}
             audioEmotionResult={audioEmotionResult}
             ageGenderResult={ageGenderResult}
             ageGenderError={ageGenderError}

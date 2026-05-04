@@ -51,6 +51,63 @@
   background: var(--surface-elevated);
 }
 
+.app-header-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.lang-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.35rem;
+  padding: 0.35rem 0.72rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  color: inherit;
+}
+
+.lang-pill-btn--arabic {
+  font-family: system-ui, 'Segoe UI', 'Tahoma', Arial, sans-serif;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+.lang-pill-btn:hover {
+  border-color: rgba(13, 148, 136, 0.35);
+  background: var(--surface-elevated);
+}
+
+.lang-pill-btn.is-active {
+  border-color: rgba(13, 148, 136, 0.55);
+  box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.15);
+}
+
+.app-header-controls .admin-link {
+  position: static;
+}
+
+.demo-rtl {
+  direction: rtl;
+}
+
 .demo-page-title {
   font-size: 1rem;
   font-weight: 600;
@@ -916,7 +973,7 @@ input[type="file"]:hover {
 
 /* Admin panel */
 .admin-shell {
-  max-width: 960px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 1.25rem 1rem 3rem;
 }
@@ -943,6 +1000,69 @@ input[type="file"]:hover {
 
 .admin-nav-spacer {
   flex: 1;
+}
+
+.admin-shell-inner {
+  max-width: 1100px;
+}
+
+.admin-page-head h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.model-health-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-md);
+}
+
+.model-health-status--ok {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+
+.model-health-status--warn {
+  background: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+}
+
+.model-health-status--fail {
+  background: rgba(239, 68, 68, 0.16);
+  color: #b91c1c;
+}
+
+.model-health-status--muted {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--text-muted);
+}
+
+.model-health-chip {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.model-health-chip--ok {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.model-health-chip--warn {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.model-health-chip--fail {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .admin-table-wrap {

@@ -34,6 +34,12 @@ def _ipv4_loopback_url(url: str) -> str:
     return re.sub(r"(?i)//localhost(?=:|/)", "//127.0.0.1", url.strip())
 
 
+def _normalize_speech_language_for_stt(raw: Optional[str]) -> str:
+    """UI kodu (tr|en|ar) → voice_to_text Form `language`; STT tarafında Whisper diline çevrilir."""
+    s = (raw or "tr").strip().lower()
+    return s if s in {"tr", "en", "ar"} else "tr"
+
+
 _CMS_ENABLED = os.environ.get("CMS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
 
 # Küçük multipart proxy istekleri: diske yazmadan bellekten upstream’e (0 = her zaman disk).
@@ -101,6 +107,7 @@ app.add_middleware(
 )
 
 if _CMS_ENABLED:
+    from cms.routers import admin_diagnostics as cms_admin_diagnostics
     from cms.routers import admin_pages as cms_admin_pages
     from cms.routers import admin_profiles as cms_admin_profiles
     from cms.routers import auth as cms_auth
@@ -110,6 +117,7 @@ if _CMS_ENABLED:
     app.include_router(cms_public.router)
     app.include_router(cms_admin_pages.router)
     app.include_router(cms_admin_profiles.router)
+    app.include_router(cms_admin_diagnostics.router)
 
 VOICE_TO_TEXT_URL = _ipv4_loopback_url(
     os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
@@ -712,8 +720,18 @@ async def proxy_analyze_depression(file: UploadFile = File(...)):
 
 
 @app.post("/analyze-voice-to-text")
-async def proxy_analyze_voice_to_text(file: UploadFile = File(...)):
-    return await _proxy_file_upload(VOICE_TO_TEXT_URL, file, file_field_name="file", proxy_name="analyze-voice-to-text")
+async def proxy_analyze_voice_to_text(
+    file: UploadFile = File(...),
+    speech_language: str = Form("tr"),
+):
+    lg = _normalize_speech_language_for_stt(speech_language)
+    return await _proxy_file_upload(
+        VOICE_TO_TEXT_URL,
+        file,
+        file_field_name="file",
+        extra_form_data={"language": lg},
+        proxy_name="analyze-voice-to-text",
+    )
 
 
 @app.post("/analyze-text-sentiment")
@@ -784,7 +802,10 @@ async def proxy_analyze_benchmark_v2(file: UploadFile = File(...), transcript: s
 
 
 @app.post("/analyze-fused")
-async def analyze_fused(file: UploadFile = File(...)):
+async def analyze_fused(
+    file: UploadFile = File(...),
+    speech_language: str = Form("tr"),
+):
     tmp_path: Optional[str] = None
     try:
         # Stream upload to disk to avoid holding large files in memory.
@@ -823,7 +844,13 @@ async def analyze_fused(file: UploadFile = File(...)):
         upload_name = (file.filename or "audio.wav").replace("/", "_").replace("\\", "_")
         ct = file.content_type or "application/octet-stream"
         _disk_bytes = os.path.getsize(disk)
-        _log.info("analyze_fused begin upload_name=%s bytes=%d", upload_name, _disk_bytes)
+        stt_lang = _normalize_speech_language_for_stt(speech_language)
+        _log.info(
+            "analyze_fused begin upload_name=%s bytes=%d speech_language=%s",
+            upload_name,
+            _disk_bytes,
+            stt_lang,
+        )
 
         async def _run_stt(c: httpx.AsyncClient) -> None:
             nonlocal stt_text, stt_err
@@ -834,6 +861,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                extra_form={"language": stt_lang},
                 step="fused_stt",
             )
             if err:

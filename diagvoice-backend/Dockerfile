@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NUMEXPR_MAX_THREADS=1 \
     HF_HOME=/app/.cache/huggingface \
     DIAGVOICE_BENCHMARK_CONFIG=/app/inference_api/config.docker.yaml \
+    DIAGVOICE_MODEL=/app/models/is-sagligi.joblib \
     TEXT_TO_SENTIMENT_PORT=8050 \
     VOICE_TO_TEXT_PORT=8051 \
     VOICE_TO_SENTIMENT_PORT=8052 \

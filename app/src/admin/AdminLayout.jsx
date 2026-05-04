@@ -15,6 +15,7 @@ export default function AdminLayout() {
       <nav className="admin-nav">
         <NavLink to="/admin/pages">Sayfalar</NavLink>
         <NavLink to="/admin/profiles">Kart profilleri</NavLink>
+        <NavLink to="/admin/models-health">Model durumu</NavLink>
         <span className="admin-nav-spacer" />
         {user?.email ? (
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{user.email}</span>
