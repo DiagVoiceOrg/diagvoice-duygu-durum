@@ -1,12 +1,12 @@
 const TRANSCRIBE_URL =
-  import.meta.env.VITE_TRANSCRIBE_URL || 'http://localhost:8001/transcribe';
+  import.meta.env.VITE_TRANSCRIBE_URL || 'http://localhost:8051/transcribe';
 const VOICE_EMOTION_URL =
-  import.meta.env.VITE_VOICE_EMOTION_URL || 'http://localhost:8002/analyze-audio';
+  import.meta.env.VITE_VOICE_EMOTION_URL || 'http://localhost:8052/analyze-audio';
 const MENTAL_FITNESS_URL =
-  import.meta.env.VITE_MENTAL_FITNESS_URL || 'http://localhost:8005/analyze-mental';
+  import.meta.env.VITE_MENTAL_FITNESS_URL || 'http://localhost:8055/analyze-mental';
 const VALIDATE_TRANSCRIPT_URL =
   import.meta.env.VITE_VALIDATE_TRANSCRIPT_URL ||
-  `${String(MENTAL_FITNESS_URL).replace(/\/analyze-mental\/?$/i, '') || 'http://localhost:8005'}/validate-transcript-meaning`;
+  `${String(MENTAL_FITNESS_URL).replace(/\/analyze-mental\/?$/i, '') || 'http://localhost:8055'}/validate-transcript-meaning`;
 const TRANSCRIPT_VALIDATE_MS = Number(import.meta.env.VITE_TRANSCRIPT_VALIDATE_MS || 90000);
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 

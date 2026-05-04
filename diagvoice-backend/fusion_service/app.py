@@ -1,9 +1,19 @@
 import asyncio
+import io
+import logging
 import math
 import os
 import re
+import sys
 import tempfile
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
 
 import fastapi
 import httpx
@@ -24,7 +34,57 @@ def _ipv4_loopback_url(url: str) -> str:
     return re.sub(r"(?i)//localhost(?=:|/)", "//127.0.0.1", url.strip())
 
 
-app = fastapi.FastAPI()
+_CMS_ENABLED = os.environ.get("CMS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+
+# Küçük multipart proxy istekleri: diske yazmadan bellekten upstream’e (0 = her zaman disk).
+FUSION_PROXY_MAX_MEMORY_BYTES = int(os.environ.get("FUSION_PROXY_MAX_MEMORY_BYTES", str(8 * 1024 * 1024)))
+FUSION_PROXY_MAX_MEMORY_BYTES = max(0, FUSION_PROXY_MAX_MEMORY_BYTES)
+
+_upstream_httpx: Optional[httpx.AsyncClient] = None
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: fastapi.FastAPI):
+    global _upstream_httpx
+    _upstream_httpx = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            float(os.environ.get("FUSION_HTTP_TIMEOUT_SEC", "900")),
+            connect=float(os.environ.get("FUSION_HTTP_CONNECT_TIMEOUT_SEC", "30")),
+            read=float(os.environ.get("FUSION_HTTP_READ_TIMEOUT_SEC", "900")),
+        ),
+        limits=httpx.Limits(max_keepalive_connections=32, max_connections=64),
+    )
+    try:
+        if _CMS_ENABLED:
+            import logging
+
+            _log = logging.getLogger(__name__)
+            try:
+                from cms.database import ensure_indexes
+
+                await ensure_indexes()
+                _log.info("CMS Mongo indeksleri hazır.")
+            except Exception:
+                _log.exception("CMS ensure_indexes başarısız (izin / ağ / URI kontrol et).")
+
+            try:
+                from cms.seed import seed_admin_if_empty, seed_default_demo_if_missing
+
+                await seed_admin_if_empty()
+                await seed_default_demo_if_missing()
+            except Exception:
+                _log.exception(
+                    "CMS seed başarısız — admin girişi için `users` koleksiyonu ve MONGO_URI / "
+                    "CMS_ADMIN_EMAIL / CMS_ADMIN_PASSWORD ortam değişkenlerini kontrol et."
+                )
+        yield
+    finally:
+        if _upstream_httpx is not None:
+            await _upstream_httpx.aclose()
+            _upstream_httpx = None
+
+
+app = fastapi.FastAPI(lifespan=_app_lifespan)
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
@@ -40,20 +100,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if _CMS_ENABLED:
+    from cms.routers import admin_pages as cms_admin_pages
+    from cms.routers import admin_profiles as cms_admin_profiles
+    from cms.routers import auth as cms_auth
+    from cms.routers import public as cms_public
+
+    app.include_router(cms_auth.router)
+    app.include_router(cms_public.router)
+    app.include_router(cms_admin_pages.router)
+    app.include_router(cms_admin_profiles.router)
+
 VOICE_TO_TEXT_URL = _ipv4_loopback_url(
-    os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8001/transcribe")
+    os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
 )
 TEXT_TO_SENTIMENT_URL = _ipv4_loopback_url(
-    os.environ.get("TEXT_TO_SENTIMENT_URL", "http://127.0.0.1:8000/analyze")
+    os.environ.get("TEXT_TO_SENTIMENT_URL", "http://127.0.0.1:8050/analyze")
 )
 VOICE_TO_SENTIMENT_URL = _ipv4_loopback_url(
-    os.environ.get("VOICE_TO_SENTIMENT_URL", "http://127.0.0.1:8002/analyze-audio")
+    os.environ.get("VOICE_TO_SENTIMENT_URL", "http://127.0.0.1:8052/analyze-audio")
 )
 DISEASE_SERVICE_URL = _ipv4_loopback_url(
-    os.environ.get("DISEASE_SERVICE_URL", "http://127.0.0.1:8004/analyze-disease")
+    os.environ.get("DISEASE_SERVICE_URL", "http://127.0.0.1:8054/analyze-disease")
 )
 MENTAL_FITNESS_URL = _ipv4_loopback_url(
-    os.environ.get("MENTAL_FITNESS_URL", "http://127.0.0.1:8005/analyze-mental")
+    os.environ.get("MENTAL_FITNESS_URL", "http://127.0.0.1:8055/analyze-mental")
 )
 _mf_validate_env = os.environ.get("MENTAL_FITNESS_VALIDATE_URL", "").strip()
 if _mf_validate_env:
@@ -66,28 +137,38 @@ else:
     else:
         MENTAL_FITNESS_VALIDATE_URL = _mf_u + "/validate-transcript-meaning"
 AGE_GENDER_URL = _ipv4_loopback_url(
-    os.environ.get("AGE_GENDER_URL", "http://127.0.0.1:8006/analyze-age-gender")
+    os.environ.get("AGE_GENDER_URL", "http://127.0.0.1:8056/analyze-age-gender")
 )
 DEPRESSION_SERVICE_URL = _ipv4_loopback_url(
-    os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8007/analyze-depression")
+    os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8057/analyze-depression")
 )
 
 # benchmark_v2 (inference_api Flask, iç ağ) — boş string ile kapatılabilir
 _inference_url_raw = os.environ.get("INFERENCE_API_URL")
 if _inference_url_raw is None:
-    INFERENCE_API_URL = "http://127.0.0.1:5008"
+    INFERENCE_API_URL = "http://127.0.0.1:8053"
 elif not str(_inference_url_raw).strip():
     INFERENCE_API_URL = ""
 else:
     INFERENCE_API_URL = _ipv4_loopback_url(str(_inference_url_raw).strip().rstrip("/"))
 
+# benchmark_v2 açıkken analyze-fused ile aynı CPU’da sklearn/feature yükü rekabet eder; gerekmiyorsa INFERENCE_API_URL boş bırakın.
+
 HTTPX_TOTAL_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_TIMEOUT_SEC", "900"))
 HTTPX_CONNECT_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_CONNECT_TIMEOUT_SEC", "30"))
 HTTPX_READ_TIMEOUT_SEC = float(os.environ.get("FUSION_HTTP_READ_TIMEOUT_SEC", "900"))
 
-# STT vb. modeller yüklenene kadar upstream kapalı olabilir — ConnectError'da tekrar dene
-FUSION_UPSTREAM_CONNECT_RETRIES = max(1, int(os.environ.get("FUSION_UPSTREAM_CONNECT_RETRIES", "60")))
-FUSION_UPSTREAM_RETRY_DELAY_SEC = float(os.environ.get("FUSION_UPSTREAM_RETRY_DELAY_SEC", "2.0"))
+# STT vb. cold start: ConnectError'da tekrar dene. Eski varsayılan 60×2s ≈ dakikalarca bekletiyordu.
+FUSION_UPSTREAM_CONNECT_RETRIES = max(1, int(os.environ.get("FUSION_UPSTREAM_CONNECT_RETRIES", "10")))
+FUSION_UPSTREAM_RETRY_DELAY_SEC = float(os.environ.get("FUSION_UPSTREAM_RETRY_DELAY_SEC", "1.0"))
+
+_log = logging.getLogger("diagvoice.fusion")
+_log.setLevel(getattr(logging, os.environ.get("DIAGVOICE_LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not _log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [diagvoice.fusion] %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
 
 FUSION_W_TEXT = float(os.environ.get("FUSION_W_TEXT", "0.5"))
 FUSION_W_TEXT = max(0.0, min(1.0, FUSION_W_TEXT))
@@ -235,6 +316,12 @@ def _build_timeout() -> httpx.Timeout:
     )
 
 
+def _upstream_client() -> httpx.AsyncClient:
+    if _upstream_httpx is None:
+        raise RuntimeError("Fusion upstream HTTP client not initialized (lifespan).")
+    return _upstream_httpx
+
+
 def _is_upstream_connection_error(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return True
@@ -252,11 +339,21 @@ async def _fusion_post_multipart_file(
     upload_name: str,
     content_type: str,
     extra_form: Optional[Dict[str, str]] = None,
+    step: str = "upstream",
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    t0 = time.perf_counter()
     last_conn: Optional[BaseException] = None
     for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
         try:
             if attempt > 0:
+                _log.warning(
+                    "retry step=%s attempt=%s/%s url=%s sleep_s=%s",
+                    step,
+                    attempt + 1,
+                    FUSION_UPSTREAM_CONNECT_RETRIES,
+                    url,
+                    FUSION_UPSTREAM_RETRY_DELAY_SEC,
+                )
                 await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
             with open(tmp_path, "rb") as fh:
                 files = {file_field: (upload_name, fh, content_type or "application/octet-stream")}
@@ -265,19 +362,37 @@ async def _fusion_post_multipart_file(
             body = r.json()
             if not isinstance(body, dict):
                 return None, f"non-dict JSON from {url}"
+            _log.info(
+                "upstream_ok step=%s url=%s http=%s total_ms=%.0f",
+                step,
+                url,
+                r.status_code,
+                (time.perf_counter() - t0) * 1000,
+            )
             return body, None
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             last_conn = e
             if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                _log.error(
+                    "upstream_fail step=%s url=%s attempts=%s total_ms=%.0f err=%s",
+                    step,
+                    url,
+                    FUSION_UPSTREAM_CONNECT_RETRIES,
+                    (time.perf_counter() - t0) * 1000,
+                    e,
+                )
                 return None, (
                     f"request failed (url={url}): upstream unreachable after "
                     f"{FUSION_UPSTREAM_CONNECT_RETRIES} attempts ({e})"
                 )
+            _log.warning("upstream_connect_error step=%s attempt=%s url=%s err=%s", step, attempt + 1, url, e)
             continue
         except Exception as e:
             if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                 last_conn = e
+                _log.warning("upstream_wrapped_connect_error step=%s attempt=%s err=%s", step, attempt + 1, e)
                 continue
+            _log.error("upstream_error step=%s url=%s total_ms=%.0f err=%s", step, url, (time.perf_counter() - t0) * 1000, e)
             return None, f"request failed (url={url}): {e}"
     return None, f"request failed (url={url}): {last_conn}"
 
@@ -286,30 +401,57 @@ async def _fusion_post_json(
     client: httpx.AsyncClient,
     url: str,
     payload: Dict[str, Any],
+    *,
+    step: str = "json_upstream",
 ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    t0 = time.perf_counter()
     last_conn: Optional[BaseException] = None
     for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
         try:
             if attempt > 0:
+                _log.warning(
+                    "retry step=%s attempt=%s/%s url=%s",
+                    step,
+                    attempt + 1,
+                    FUSION_UPSTREAM_CONNECT_RETRIES,
+                    url,
+                )
                 await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
             r = await client.post(url, json=payload)
             r.raise_for_status()
             body = r.json()
             if not isinstance(body, dict):
                 return None, f"non-dict JSON from {url}"
+            _log.info(
+                "upstream_ok step=%s url=%s http=%s total_ms=%.0f",
+                step,
+                url,
+                r.status_code,
+                (time.perf_counter() - t0) * 1000,
+            )
             return body, None
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             last_conn = e
             if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                _log.error(
+                    "upstream_fail step=%s url=%s attempts=%s total_ms=%.0f err=%s",
+                    step,
+                    url,
+                    FUSION_UPSTREAM_CONNECT_RETRIES,
+                    (time.perf_counter() - t0) * 1000,
+                    e,
+                )
                 return None, (
                     f"request failed (url={url}): upstream unreachable after "
                     f"{FUSION_UPSTREAM_CONNECT_RETRIES} attempts ({e})"
                 )
+            _log.warning("upstream_connect_error step=%s attempt=%s url=%s err=%s", step, attempt + 1, url, e)
             continue
         except Exception as e:
             if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                 last_conn = e
                 continue
+            _log.error("upstream_error step=%s url=%s err=%s", step, url, e)
             return None, f"request failed (url={url}): {e}"
     return None, f"request failed (url={url}): {last_conn}"
 
@@ -320,39 +462,110 @@ async def _proxy_file_upload(
     *,
     file_field_name: str = "file",
     extra_form_data: Optional[Dict[str, str]] = None,
+    proxy_name: str = "proxy_multipart",
 ) -> JSONResponse:
     tmp_path: Optional[str] = None
+    mem_body: Optional[bytes] = None
+    t_req = time.perf_counter()
     try:
         suffix = ""
         if file.filename:
             safe = file.filename.replace("/", "_").replace("\\", "_")
             suffix = f"_{safe}"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp_path = tmp.name
+        ctype = file.content_type or "application/octet-stream"
+        fname = file.filename or "audio"
+
+        buf = bytearray()
+        th = FUSION_PROXY_MAX_MEMORY_BYTES
+        if th <= 0:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp_path = tmp.name
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+        else:
             while True:
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
-                tmp.write(chunk)
+                if tmp_path is None and len(buf) + len(chunk) <= th:
+                    buf.extend(chunk)
+                    continue
+                if tmp_path is None:
+                    t = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                    tmp_path = t.name
+                    t.write(buf)
+                    t.write(chunk)
+                    t.close()
+                    buf.clear()
+                else:
+                    with open(tmp_path, "ab") as wf:
+                        wf.write(chunk)
 
+        if tmp_path is None:
+            mem_body = bytes(buf)
+            nbytes = len(mem_body)
+            storage = "memory"
+        else:
+            nbytes = os.path.getsize(tmp_path)
+            storage = "disk"
+
+        _log.info(
+            "proxy_begin name=%s upstream=%s file=%s bytes=%d storage=%s upload_ms=%.0f",
+            proxy_name,
+            upstream_url,
+            fname,
+            nbytes,
+            storage,
+            (time.perf_counter() - t_req) * 1000,
+        )
+
+        client = _upstream_client()
         r: Optional[httpx.Response] = None
+        t_upstream = time.perf_counter()
         for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
             try:
                 if attempt > 0:
+                    _log.warning(
+                        "proxy_retry name=%s attempt=%s/%s upstream=%s",
+                        proxy_name,
+                        attempt + 1,
+                        FUSION_UPSTREAM_CONNECT_RETRIES,
+                        upstream_url,
+                    )
                     await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
-                async with httpx.AsyncClient(timeout=_build_timeout()) as client:
+                if mem_body is not None:
+                    files = {
+                        file_field_name: (
+                            fname,
+                            io.BytesIO(mem_body),
+                            ctype,
+                        )
+                    }
+                    r = await client.post(upstream_url, files=files, data=extra_form_data)
+                else:
                     with open(tmp_path, "rb") as f:
                         files = {
                             file_field_name: (
-                                file.filename or "audio",
+                                fname,
                                 f,
-                                file.content_type or "application/octet-stream",
+                                ctype,
                             )
                         }
                         r = await client.post(upstream_url, files=files, data=extra_form_data)
                 break
             except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                 if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                    _log.error(
+                        "proxy_fail name=%s upstream=%s attempts=%s total_ms=%.0f err=%s",
+                        proxy_name,
+                        upstream_url,
+                        FUSION_UPSTREAM_CONNECT_RETRIES,
+                        (time.perf_counter() - t_upstream) * 1000,
+                        e,
+                    )
                     return JSONResponse(
                         status_code=503,
                         content={
@@ -364,6 +577,7 @@ async def _proxy_file_upload(
             except Exception as e:
                 if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                     continue
+                _log.error("proxy_error name=%s upstream=%s err=%s", proxy_name, upstream_url, e)
                 return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
         if r is None:
@@ -375,6 +589,14 @@ async def _proxy_file_upload(
             body = r.json()
         except Exception:
             body = {"detail": r.text or "Upstream returned non-JSON"}
+        _log.info(
+            "proxy_end name=%s upstream=%s http=%s upstream_ms=%.0f total_ms=%.0f",
+            proxy_name,
+            upstream_url,
+            r.status_code,
+            (time.perf_counter() - t_upstream) * 1000,
+            (time.perf_counter() - t_req) * 1000,
+        )
         return JSONResponse(status_code=r.status_code, content=body)
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -384,17 +606,25 @@ async def _proxy_file_upload(
                 pass
 
 
-async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONResponse:
+async def _proxy_json(
+    upstream_url: str,
+    payload: Dict[str, Any],
+    *,
+    proxy_name: str = "proxy_json",
+) -> JSONResponse:
+    t0 = time.perf_counter()
+    _log.info("proxy_json_begin name=%s upstream=%s", proxy_name, upstream_url)
     r: Optional[httpx.Response] = None
     for attempt in range(FUSION_UPSTREAM_CONNECT_RETRIES):
         try:
             if attempt > 0:
+                _log.warning("proxy_json_retry name=%s attempt=%s", proxy_name, attempt + 1)
                 await asyncio.sleep(FUSION_UPSTREAM_RETRY_DELAY_SEC)
-            async with httpx.AsyncClient(timeout=_build_timeout()) as client:
-                r = await client.post(upstream_url, json=payload)
+            r = await _upstream_client().post(upstream_url, json=payload)
             break
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
+                _log.error("proxy_json_fail name=%s upstream=%s err=%s", proxy_name, upstream_url, e)
                 return JSONResponse(
                     status_code=503,
                     content={
@@ -406,6 +636,7 @@ async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONRespons
         except Exception as e:
             if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                 continue
+            _log.error("proxy_json_error name=%s err=%s", proxy_name, e)
             return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
     if r is None:
@@ -414,6 +645,12 @@ async def _proxy_json(upstream_url: str, payload: Dict[str, Any]) -> JSONRespons
         body = r.json()
     except Exception:
         body = {"detail": r.text or "Upstream returned non-JSON"}
+    _log.info(
+        "proxy_json_end name=%s http=%s total_ms=%.0f",
+        proxy_name,
+        r.status_code,
+        (time.perf_counter() - t0) * 1000,
+    )
     return JSONResponse(status_code=r.status_code, content=body)
 
 
@@ -471,12 +708,12 @@ async def proxy_analyze_depression(file: UploadFile = File(...)):
     Aracı endpoint: gelen ses dosyasını doğrudan depresyon servisine iletir.
     Yanıt gövdesi ve HTTP durumu depresyon servisiyle aynıdır (JSON).
     """
-    return await _proxy_file_upload(DEPRESSION_SERVICE_URL, file, file_field_name="file")
+    return await _proxy_file_upload(DEPRESSION_SERVICE_URL, file, file_field_name="file", proxy_name="analyze-depression")
 
 
 @app.post("/analyze-voice-to-text")
 async def proxy_analyze_voice_to_text(file: UploadFile = File(...)):
-    return await _proxy_file_upload(VOICE_TO_TEXT_URL, file, file_field_name="file")
+    return await _proxy_file_upload(VOICE_TO_TEXT_URL, file, file_field_name="file", proxy_name="analyze-voice-to-text")
 
 
 @app.post("/analyze-text-sentiment")
@@ -484,22 +721,22 @@ async def proxy_analyze_text_sentiment(payload: Dict[str, Any] = Body(...)):
     text = str(payload.get("text", "")).strip()
     if not text:
         raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
-    return await _proxy_json(TEXT_TO_SENTIMENT_URL, {"text": text})
+    return await _proxy_json(TEXT_TO_SENTIMENT_URL, {"text": text}, proxy_name="analyze-text-sentiment")
 
 
 @app.post("/analyze-voice-sentiment")
 async def proxy_analyze_voice_sentiment(file: UploadFile = File(...)):
-    return await _proxy_file_upload(VOICE_TO_SENTIMENT_URL, file, file_field_name="file")
+    return await _proxy_file_upload(VOICE_TO_SENTIMENT_URL, file, file_field_name="file", proxy_name="analyze-voice-sentiment")
 
 
 @app.post("/analyze-disease")
 async def proxy_analyze_disease(file: UploadFile = File(...)):
-    return await _proxy_file_upload(DISEASE_SERVICE_URL, file, file_field_name="file")
+    return await _proxy_file_upload(DISEASE_SERVICE_URL, file, file_field_name="file", proxy_name="analyze-disease")
 
 
 @app.post("/analyze-mental-fitness")
 async def proxy_analyze_mental_fitness(file: UploadFile = File(...)):
-    return await _proxy_file_upload(MENTAL_FITNESS_URL, file, file_field_name="file")
+    return await _proxy_file_upload(MENTAL_FITNESS_URL, file, file_field_name="file", proxy_name="analyze-mental-fitness")
 
 
 @app.post("/analyze-mental-fitness/validate-transcript-meaning")
@@ -508,12 +745,13 @@ async def proxy_validate_transcript_meaning(payload: Dict[str, Any] = Body(...))
     return await _proxy_json(
         MENTAL_FITNESS_VALIDATE_URL,
         {"text": str(payload.get("text", "")), "language": str(payload.get("language", ""))},
+        proxy_name="validate-transcript-meaning",
     )
 
 
 @app.post("/analyze-age-gender")
 async def proxy_analyze_age_gender(file: UploadFile = File(...)):
-    return await _proxy_file_upload(AGE_GENDER_URL, file, file_field_name="file")
+    return await _proxy_file_upload(AGE_GENDER_URL, file, file_field_name="file", proxy_name="analyze-age-gender")
 
 
 @app.post("/analyze-text-audio-fusion")
@@ -527,6 +765,7 @@ async def proxy_analyze_text_audio_fusion(
         audio,
         file_field_name="audio",
         extra_form_data={"text": text, "fusion_mode": fusion_mode},
+        proxy_name="analyze-text-audio-fusion",
     )
 
 
@@ -540,6 +779,7 @@ async def proxy_analyze_benchmark_v2(file: UploadFile = File(...), transcript: s
         file,
         file_field_name="audio",
         extra_form_data={"transcript": transcript or ""},
+        proxy_name="analyze-benchmark-v2",
     )
 
 
@@ -563,12 +803,6 @@ async def analyze_fused(file: UploadFile = File(...)):
         assert tmp_path is not None
         disk = tmp_path
 
-        timeout = httpx.Timeout(
-            HTTPX_TOTAL_TIMEOUT_SEC,
-            connect=HTTPX_CONNECT_TIMEOUT_SEC,
-            read=HTTPX_READ_TIMEOUT_SEC,
-        )
-
         benchmark_v2_result: Optional[Dict[str, Any]] = None
         benchmark_v2_err: Optional[str] = None
         stt_text: Optional[str] = None
@@ -588,6 +822,8 @@ async def analyze_fused(file: UploadFile = File(...)):
 
         upload_name = (file.filename or "audio.wav").replace("/", "_").replace("\\", "_")
         ct = file.content_type or "application/octet-stream"
+        _disk_bytes = os.path.getsize(disk)
+        _log.info("analyze_fused begin upload_name=%s bytes=%d", upload_name, _disk_bytes)
 
         async def _run_stt(c: httpx.AsyncClient) -> None:
             nonlocal stt_text, stt_err
@@ -598,6 +834,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_stt",
             )
             if err:
                 stt_err = err
@@ -617,6 +854,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_voice_sentiment",
             )
 
         async def _run_disease(c: httpx.AsyncClient) -> None:
@@ -628,6 +866,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_disease",
             )
 
         async def _run_mental(c: httpx.AsyncClient) -> None:
@@ -639,6 +878,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_mental_fitness",
             )
 
         async def _run_age_gender(c: httpx.AsyncClient) -> None:
@@ -650,6 +890,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_age_gender",
             )
 
         async def _run_depression(c: httpx.AsyncClient) -> None:
@@ -661,6 +902,7 @@ async def analyze_fused(file: UploadFile = File(...)):
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
+                step="fused_depression",
             )
 
         predict_url = f"{INFERENCE_API_URL}/predict" if INFERENCE_API_URL else ""
@@ -675,30 +917,60 @@ async def analyze_fused(file: UploadFile = File(...)):
                 upload_name=upload_name,
                 content_type=ct,
                 extra_form={"transcript": transcript or ""},
+                step="fused_benchmark_v2",
             )
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            await asyncio.gather(
-                _run_stt(client),
-                _run_voice_sentiment(client),
-                _run_disease(client),
-                _run_mental(client),
-                _run_age_gender(client),
-                _run_depression(client),
+        async def _timed(name: str, coro):
+            t0 = time.perf_counter()
+            await coro
+            _log.info("analyze_fused parallel_branch_done branch=%s ms=%.0f", name, (time.perf_counter() - t0) * 1000)
+
+        client = _upstream_client()
+        t_par = time.perf_counter()
+        await asyncio.gather(
+            _timed("stt", _run_stt(client)),
+            _timed("voice_sentiment", _run_voice_sentiment(client)),
+            _timed("disease", _run_disease(client)),
+            _timed("mental_fitness", _run_mental(client)),
+            _timed("age_gender", _run_age_gender(client)),
+            _timed("depression", _run_depression(client)),
+        )
+        _log.info(
+            "analyze_fused parallel_gather_done total_ms=%.0f (en yavaş dal yukarıdaki max)",
+            (time.perf_counter() - t_par) * 1000,
+        )
+
+        transcript = (stt_text or "").strip()
+        if transcript:
+            t_txt = time.perf_counter()
+            text_result, text_err = await _fusion_post_json(
+                client,
+                TEXT_TO_SENTIMENT_URL,
+                {"text": transcript},
+                step="fused_text_sentiment",
             )
+            _log.info(
+                "analyze_fused text_sentiment_done ms=%.0f err=%s",
+                (time.perf_counter() - t_txt) * 1000,
+                text_err is not None,
+            )
+        elif stt_err:
+            text_err = f"text_sentiment skipped: STT failed ({stt_err})"
+        elif stt_text is not None:
+            text_err = "skipped: empty transcript after STT"
+        else:
+            text_err = "text_sentiment skipped: no transcript"
 
-            transcript = (stt_text or "").strip()
-            if transcript:
-                text_result, text_err = await _fusion_post_json(client, TEXT_TO_SENTIMENT_URL, {"text": transcript})
-            elif stt_err:
-                text_err = f"text_sentiment skipped: STT failed ({stt_err})"
-            elif stt_text is not None:
-                text_err = "skipped: empty transcript after STT"
-            else:
-                text_err = "text_sentiment skipped: no transcript"
-
-            if INFERENCE_API_URL:
-                await _run_benchmark(client, transcript)
+        if INFERENCE_API_URL:
+            t_bm = time.perf_counter()
+            await _run_benchmark(client, transcript)
+            _log.info(
+                "analyze_fused benchmark_v2_done ms=%.0f err=%s",
+                (time.perf_counter() - t_bm) * 1000,
+                benchmark_v2_err is not None,
+            )
+        else:
+            _log.info("analyze_fused benchmark_v2 skipped (INFERENCE_API_URL empty)")
 
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -745,6 +1017,11 @@ async def analyze_fused(file: UploadFile = File(...)):
         disagreement = abs(float(valence_text) - float(valence_audio))
 
     fused = fuse(valence_text, valence_audio, w_text_used)
+    _log.info(
+        "analyze_fused response_ready stt_ok=%s transcript_len=%d",
+        stt_err is None,
+        len((stt_text or "").strip()),
+    )
 
     return {
         "text": stt_text,
@@ -776,4 +1053,5 @@ async def analyze_fused(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    _fusion_port = int(os.environ.get("FUSION_PORT", "8085"))
+    uvicorn.run(app, host="0.0.0.0", port=_fusion_port)

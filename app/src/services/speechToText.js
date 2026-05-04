@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = "http://localhost:8001/transcribe";
+const API_URL =
+  import.meta.env.VITE_VOICE_TO_TEXT_URL || "http://localhost:8051/transcribe";
 
 export const speechToText = async (audioData) => {
   const formData = new FormData();

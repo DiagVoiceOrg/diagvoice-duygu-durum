@@ -86,14 +86,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
     return {"text": result["text"]}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8001)  # --reload kaldırıldı; prod/docker’da kapalı
 ```
 
 ### Adım 4: API'nin Çalıştırılması ve Test Edilmesi
 
 1.  **Sunucuyu Başlatma**: Terminalde, `voice-to-text` dizinindeyken aşağıdaki komut çalıştırılır:
     ```bash
-    uvicorn app:app --reload --port 8001
+    uvicorn app:app --host 0.0.0.0 --port 8001
     ```
 2.  **Test**: `curl` veya herhangi bir API test aracı ile `http://localhost:8001/transcribe` adresine bir ses dosyası (`.wav`, `.mp3` vb.) `POST` isteği atılarak API test edilebilir.
 

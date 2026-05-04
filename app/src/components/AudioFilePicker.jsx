@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const AudioFilePicker = ({ onFileSelect }) => {
+const AudioFilePicker = ({ onFileSelect, disabled = false }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -11,6 +11,7 @@ const AudioFilePicker = ({ onFileSelect }) => {
   }, [previewUrl]);
 
   const handleChange = (e) => {
+    if (disabled) return;
     const file = e.target.files?.[0] ?? null;
     setPreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -25,13 +26,9 @@ const AudioFilePicker = ({ onFileSelect }) => {
   };
 
   return (
-    <div className="card card-file-picker">
+    <div className={`card card-file-picker${disabled ? ' card-disabled' : ''}`}>
       <h2>Bilgisayardan ses</h2>
-      <input
-        type="file"
-        accept="audio/*"
-        onChange={handleChange}
-      />
+      <input type="file" accept="audio/*" onChange={handleChange} disabled={disabled} />
       {selectedFile && (
         <>
           <div className="result-row" style={{ borderBottom: 'none', paddingTop: '0.75rem' }}>

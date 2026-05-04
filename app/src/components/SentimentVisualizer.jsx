@@ -1,7 +1,15 @@
 import React from 'react';
 import Tooltip from './Tooltip';
 
-const SentimentVisualizer = ({ sentiment, score }) => {
+const SentimentVisualizer = ({
+  sentiment,
+  score,
+  displayTitle = 'Analiz Sonucu',
+  subtitle,
+  footnote,
+  badge,
+  periodLabel,
+}) => {
   if (sentiment === null || score === null) {
     return null;
   }
@@ -32,7 +40,14 @@ const SentimentVisualizer = ({ sentiment, score }) => {
 
   return (
     <div className={`card sentiment-card ${bgClass}`}>
-      <h2>Analiz Sonucu</h2>
+      <div className="card-header-text sentiment-card-heading">
+        <div className="card-title-row">
+          <h2>{displayTitle}</h2>
+          {badge ? <span className="card-badge">{badge}</span> : null}
+        </div>
+        {subtitle ? <p className="card-subtitle">{subtitle}</p> : null}
+        {periodLabel ? <p className="card-period">{periodLabel}</p> : null}
+      </div>
       <div className="sentiment-content">
         <span className="sentiment-icon">{icon}</span>
         <p className="sentiment-label" style={{ color }}>
@@ -45,6 +60,7 @@ const SentimentVisualizer = ({ sentiment, score }) => {
           </Tooltip>
         </p>
       </div>
+      {footnote ? <p className="card-footnote">{footnote}</p> : null}
     </div>
   );
 };

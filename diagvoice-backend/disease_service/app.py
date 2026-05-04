@@ -1,7 +1,12 @@
+import contextlib
 import io
+import logging
 import os
 import tempfile
+import threading
+import time
 import traceback
+from typing import Any
 
 import fastapi
 import librosa
@@ -10,6 +15,7 @@ import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydub import AudioSegment
+from starlette.concurrency import run_in_threadpool
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 
 
@@ -17,6 +23,23 @@ TARGET_SR = 16000
 MAX_SEC = float(os.environ.get("DISEASE_MAX_SEC", "30"))
 MAX_SEC = max(1.0, min(300.0, MAX_SEC))
 MAX_SAMPLES = int(TARGET_SR * MAX_SEC)
+
+MODEL_DIR = os.environ.get("DISEASE_MODEL_DIR", "/app/models/usye")
+
+_log = logging.getLogger("diagvoice.disease")
+_log.setLevel(getattr(logging, os.environ.get("DIAGVOICE_LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not _log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [diagvoice.disease] %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
+
+_infer_lock = threading.Lock()
+_DISEASE_USE_INFER_LOCK = os.environ.get("DISEASE_USE_INFER_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
 
 app = fastapi.FastAPI()
 
@@ -34,21 +57,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_DIR = os.environ.get("DISEASE_MODEL_DIR", "/app/models/usye")
-
 print("Starting disease-service and loading model...")
 try:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Model ve feature_extractor'ı yalnızca yerel dosyalardan yükle
-    # (HuggingFace Hub'a repo ID olarak gitmesin diye)
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         MODEL_DIR,
         local_files_only=True,
     )
-    # config.json'da "architectures": ["Wav2Vec2ForSequenceClassification"] olduğu için
-    # AutoModelForAudioClassification, Wav2Vec2 tabanlı audio classification modelleriyle uyumlu.
     model = AutoModelForAudioClassification.from_pretrained(
         MODEL_DIR,
         local_files_only=True,
@@ -67,16 +84,29 @@ except Exception:
 
 
 def _decode_to_float32_16k(path: str):
-    audio_segment = AudioSegment.from_file(path)
-    audio_segment = audio_segment.set_frame_rate(TARGET_SR).set_channels(1).set_sample_width(2)
-    wav_buffer = io.BytesIO()
-    audio_segment.export(wav_buffer, format="wav")
-    wav_buffer.seek(0)
+    y = None
+    sr = TARGET_SR
+    try:
+        y_load, sr_load = librosa.load(path, sr=TARGET_SR, mono=True)
+        y = y_load.astype("float32")
+        sr = int(sr_load)
+    except Exception:
+        y = None
 
-    y, sr = librosa.load(wav_buffer, sr=TARGET_SR, mono=True)
+    if y is None or len(y) == 0:
+        audio_segment = AudioSegment.from_file(path)
+        audio_segment = audio_segment.set_frame_rate(TARGET_SR).set_channels(1).set_sample_width(2)
+        wav_buffer = io.BytesIO()
+        audio_segment.export(wav_buffer, format="wav")
+        wav_buffer.seek(0)
+        y, sr = librosa.load(wav_buffer, sr=TARGET_SR, mono=True)
+        y = y.astype("float32")
+
     if y is None or len(y) == 0:
         raise RuntimeError("Empty audio")
-    y = y.astype("float32")
+
+    if sr != TARGET_SR:
+        y = librosa.resample(y, orig_sr=sr, target_sr=TARGET_SR).astype("float32")
 
     if len(y) > MAX_SAMPLES:
         start = (len(y) - MAX_SAMPLES) // 2
@@ -85,6 +115,45 @@ def _decode_to_float32_16k(path: str):
     m = float(abs(y).max() + 1e-6)
     y = y / m
     return y
+
+
+def _analyze_disease_sync(tmp_path: str) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    _cm = _infer_lock if _DISEASE_USE_INFER_LOCK else contextlib.nullcontext()
+    with _cm:
+        t_dec = time.perf_counter()
+        y = _decode_to_float32_16k(tmp_path)
+        decode_ms = (time.perf_counter() - t_dec) * 1000
+
+        if model is None or feature_extractor is None:
+            raise RuntimeError("Model not loaded")
+
+        t_inf = time.perf_counter()
+        inputs = feature_extractor(y, sampling_rate=TARGET_SR, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            out = model(**inputs)
+            logits = out.logits.squeeze(0)
+            probs = torch.softmax(logits, dim=-1)
+
+        pred_id_raw = int(torch.argmax(probs).item())
+        probs_list = probs.detach().cpu().tolist()
+        infer_ms = (time.perf_counter() - t_inf) * 1000
+
+        pred_id = 1 - pred_id_raw
+        pred_label = id2label.get(pred_id) if isinstance(id2label, dict) else str(pred_id)
+        probs_swapped = [probs_list[1], probs_list[0]]
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    _log.info("analyze_disease_done decode_ms=%.0f infer_ms=%.0f total_ms=%.0f", decode_ms, infer_ms, total_ms)
+
+    return {
+        "pred_id": pred_id,
+        "pred_label": pred_label,
+        "probs": probs_swapped,
+        "labels": id2label,
+    }
 
 
 @app.get("/")
@@ -107,6 +176,7 @@ async def analyze_disease(file: UploadFile = File(...)):
             safe = file.filename.replace("/", "_").replace("\\", "_")
             suffix = f"_{safe}"
 
+        t_recv = time.perf_counter()
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp_path = tmp.name
             while True:
@@ -114,32 +184,15 @@ async def analyze_disease(file: UploadFile = File(...)):
                 if not chunk:
                     break
                 tmp.write(chunk)
+        recv_ms = (time.perf_counter() - t_recv) * 1000
+        nbytes = os.path.getsize(tmp_path) if tmp_path else 0
+        _log.info("analyze_disease_begin file=%s bytes=%d recv_ms=%.0f", file.filename or "", nbytes, recv_ms)
 
-        y = _decode_to_float32_16k(tmp_path)
-        inputs = feature_extractor(y, sampling_rate=TARGET_SR, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            out = model(**inputs)
-            logits = out.logits.squeeze(0)
-            probs = torch.softmax(logits, dim=-1)
-
-        pred_id_raw = int(torch.argmax(probs).item())
-        probs_list = probs.detach().cpu().tolist()
-
-        # Model ters etiket veriyor: 0->healthy, 1->sick aslında ters (sağlıklıya hasta, hastaya sağlıklı basıyor)
-        pred_id = 1 - pred_id_raw
-        pred_label = id2label.get(pred_id) if isinstance(id2label, dict) else str(pred_id)
-        probs_swapped = [probs_list[1], probs_list[0]]
-
-        return {
-            "pred_id": pred_id,
-            "pred_label": pred_label,
-            "probs": probs_swapped,
-            "labels": id2label,
-        }
+        return await run_in_threadpool(_analyze_disease_sync, tmp_path)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Disease analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Disease analysis failed: {e}") from e
     finally:
         try:
             if tmp_path and os.path.exists(tmp_path):
@@ -149,4 +202,5 @@ async def analyze_disease(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8004)
+    _port = int(os.environ.get("DISEASE_SERVICE_PORT", "8054"))
+    uvicorn.run(app, host="0.0.0.0", port=_port)

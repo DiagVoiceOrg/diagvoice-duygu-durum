@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = "http://localhost:8000/analyze";
+const API_URL =
+  import.meta.env.VITE_TEXT_SENTIMENT_URL || "http://localhost:8050/analyze";
 
 export const analyzeSentiment = async (text) => {
   try {

@@ -1,17 +1,24 @@
+import contextlib
 import io
-import os
 import json
+import logging
+import os
 import tempfile
+import threading
+import time
 import traceback
+from typing import Any
 
-import numpy as np
 import fastapi
+import librosa
+import numpy as np
 import torch
 import torchaudio
 import torch.nn as nn
 import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from transformers import AutoFeatureExtractor, AutoModel, AutoModelForAudioClassification
 
 app = fastapi.FastAPI()
@@ -41,6 +48,27 @@ BASE_MODEL = "microsoft/wavlm-base"
 GENDER_MODEL_ID = os.environ.get(
     "GENDER_MODEL_ID",
     "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
+)
+
+_USE_READY_GENDER_MODEL = os.environ.get("AGE_GENDER_USE_READY_GENDER_MODEL", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+
+_log = logging.getLogger("diagvoice.age_gender")
+_log.setLevel(getattr(logging, os.environ.get("DIAGVOICE_LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not _log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [diagvoice.age_gender] %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
+
+_infer_lock = threading.Lock()
+_AGE_GENDER_USE_INFER_LOCK = os.environ.get("AGE_GENDER_USE_INFER_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
 )
 
 gender_labels = []
@@ -116,27 +144,28 @@ def _load_model():
 _load_model()
 
 
-def _preprocess_audio(audio_bytes: bytes) -> torch.Tensor:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
-
+def _wav_tensor_from_path(tmp_path: str) -> torch.Tensor:
+    """Önce librosa; olmazsa pydub (m4a/mp3 vb.). Çıktı: [MAX_LEN] float32."""
+    wav: torch.Tensor | None = None
     try:
-        # pydub ile yükle (m4a, wav, mp3 destekler)
+        y, s = librosa.load(tmp_path, sr=SR, mono=True)
+        if y is not None and len(y) > 0:
+            wav = torch.from_numpy(np.asarray(y, dtype=np.float32))
+            wav = torch.nan_to_num(wav)
+    except Exception:
+        wav = None
+
+    if wav is None or wav.numel() == 0:
         from pydub import AudioSegment
+
         audio = AudioSegment.from_file(tmp_path)
         audio = audio.set_frame_rate(SR).set_channels(1)
-        wav = np.array(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
-        wav = torch.tensor(wav, dtype=torch.float32)
+        arr = np.array(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
+        wav = torch.tensor(arr, dtype=torch.float32)
         wav = torch.nan_to_num(wav)
-        wav = wav[:MAX_LEN] if wav.numel() > MAX_LEN else nn.functional.pad(wav, (0, MAX_LEN - wav.numel()))
-        return wav
-    finally:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
+
+    wav = wav[:MAX_LEN] if wav.numel() > MAX_LEN else nn.functional.pad(wav, (0, MAX_LEN - wav.numel()))
+    return wav
 
 
 def _normalize_gender_label(raw: str) -> str:
@@ -197,6 +226,64 @@ def _predict_gender_ready_model(wav_mono_16k: torch.Tensor):
     return {"pred_id": pred_id, "pred_label": pred_label, "probs": probs_out}
 
 
+def _analyze_age_gender_sync(tmp_path: str) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    _cm = _infer_lock if _AGE_GENDER_USE_INFER_LOCK else contextlib.nullcontext()
+    with _cm:
+        t_dec = time.perf_counter()
+        wav = _wav_tensor_from_path(tmp_path)
+        decode_ms = (time.perf_counter() - t_dec) * 1000
+
+        wav_b = wav.unsqueeze(0).to(device)
+
+        t_inf = time.perf_counter()
+        with torch.no_grad():
+            lg, la = model(wav_b)
+            g_probs_mt = torch.softmax(lg, dim=-1).cpu().numpy()[0]
+            a_probs = torch.softmax(la, dim=-1).cpu().numpy()[0]
+            g_pred_mt = int(lg.argmax(-1).cpu().item())
+            a_pred = int(la.argmax(-1).cpu().item())
+
+        gender_ready = None
+        if _USE_READY_GENDER_MODEL:
+            gender_ready = _predict_gender_ready_model(wav.detach().cpu())
+
+        if gender_ready is None:
+            g_probs = [float(x) for x in g_probs_mt.tolist()]
+            g_pred = g_pred_mt
+            g_label = gender_labels[g_pred]
+            gender_source = "multitask_fallback"
+        else:
+            g_probs = [float(x) for x in gender_ready["probs"]]
+            g_pred = int(gender_ready["pred_id"])
+            g_label = str(gender_ready["pred_label"])
+            gender_source = "ready_model"
+        infer_ms = (time.perf_counter() - t_inf) * 1000
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    _log.info(
+        "analyze_age_gender_done decode_ms=%.0f infer_ms=%.0f total_ms=%.0f source=%s",
+        decode_ms,
+        infer_ms,
+        total_ms,
+        gender_source,
+    )
+
+    return {
+        "gender": {
+            "pred_id": g_pred,
+            "pred_label": g_label,
+            "probs": g_probs,
+            "source": gender_source,
+        },
+        "agebin": {
+            "pred_id": a_pred,
+            "pred_label": agebin_labels[a_pred],
+            "probs": [float(x) for x in a_probs.tolist()],
+        },
+    }
+
+
 @app.get("/")
 async def root():
     return {
@@ -212,51 +299,37 @@ async def analyze_age_gender(file: UploadFile = File(...)):
     if model is None:
         raise HTTPException(status_code=500, detail="Age-gender model could not be loaded. Check server logs.")
 
+    tmp_path = None
     try:
-        audio_bytes = await file.read()
-        if not audio_bytes:
+        suffix = ""
+        if file.filename:
+            safe = str(file.filename).replace("/", "_").replace("\\", "_")
+            suffix = f"_{safe}"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+
+        if not tmp_path or os.path.getsize(tmp_path) == 0:
             raise HTTPException(status_code=400, detail="Empty audio file.")
 
-        wav = _preprocess_audio(audio_bytes)
-        wav = wav.unsqueeze(0).to(device)
-
-        with torch.no_grad():
-            lg, la = model(wav)
-            g_probs_mt = torch.softmax(lg, dim=-1).cpu().numpy()[0]
-            a_probs = torch.softmax(la, dim=-1).cpu().numpy()[0]
-            g_pred_mt = int(lg.argmax(-1).cpu().item())
-            a_pred = int(la.argmax(-1).cpu().item())
-
-        gender_ready = _predict_gender_ready_model(wav.squeeze(0).cpu())
-        if gender_ready is None:
-            g_probs = [float(x) for x in g_probs_mt.tolist()]
-            g_pred = g_pred_mt
-            g_label = gender_labels[g_pred]
-            gender_source = "multitask_fallback"
-        else:
-            g_probs = [float(x) for x in gender_ready["probs"]]
-            g_pred = int(gender_ready["pred_id"])
-            g_label = str(gender_ready["pred_label"])
-            gender_source = "ready_model"
-
-        return {
-            "gender": {
-                "pred_id": g_pred,
-                "pred_label": g_label,
-                "probs": g_probs,
-                "source": gender_source,
-            },
-            "agebin": {
-                "pred_id": a_pred,
-                "pred_label": agebin_labels[a_pred],
-                "probs": [float(x) for x in a_probs.tolist()],
-            },
-        }
+        _log.info("analyze_age_gender_begin file=%s bytes=%d", file.filename or "", os.path.getsize(tmp_path))
+        return await run_in_threadpool(_analyze_age_gender_sync, tmp_path)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Age-gender analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Age-gender analysis failed: {e}") from e
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8006)
+    _port = int(os.environ.get("AGE_GENDER_PORT", "8056"))
+    uvicorn.run(app, host="0.0.0.0", port=_port)

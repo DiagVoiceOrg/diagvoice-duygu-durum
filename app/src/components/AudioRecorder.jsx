@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RecordPlugin from 'wavesurfer.js/dist/plugins/record.esm.js';
 
-const AudioRecorder = ({ onRecordingComplete }) => {
+const AudioRecorder = ({ onRecordingComplete, disabled = false }) => {
   const waveContainerRef = useRef(null);
   const wavesurferRef = useRef(null);
   const recordPluginRef = useRef(null);
@@ -29,6 +29,7 @@ const AudioRecorder = ({ onRecordingComplete }) => {
   }, []);
 
   const startRecording = useCallback(async () => {
+    if (disabled) return;
     setAudioUrl('');
     wavesurferRef.current = createWaveSurfer();
     
@@ -55,7 +56,7 @@ const AudioRecorder = ({ onRecordingComplete }) => {
       console.error('Error starting recording:', e);
       alert('Mikrofon erişimi reddedildi veya bir hata oluştu.');
     }
-  }, [createWaveSurfer, onRecordingComplete, isRecording]);
+  }, [createWaveSurfer, onRecordingComplete, isRecording, disabled]);
 
   const stopRecording = useCallback(() => {
     if (recordPluginRef.current) {
@@ -79,21 +80,21 @@ const AudioRecorder = ({ onRecordingComplete }) => {
   }, [audioUrl]);
 
   return (
-    <div className="card card-recorder">
+    <div className={`card card-recorder${disabled ? ' card-disabled' : ''}`}>
       <h2>Mikrofon kaydı</h2>
       <div ref={waveContainerRef} className="waveform-container"></div>
       <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
         {!isRecording ? (
-          <button onClick={startRecording} disabled={isRecording}>
+          <button onClick={startRecording} disabled={isRecording || disabled}>
             Kaydı Başlat
           </button>
         ) : (
-          <button onClick={stopRecording} disabled={!isRecording}>
+          <button onClick={stopRecording} disabled={!isRecording || disabled}>
             Kaydı Durdur
           </button>
         )}
         {audioUrl && !isRecording && (
-          <button onClick={handlePlayPause} className="secondary">
+          <button onClick={handlePlayPause} className="secondary" disabled={disabled}>
             {isPlaying ? 'Durdur' : 'Oynat'}
           </button>
         )}

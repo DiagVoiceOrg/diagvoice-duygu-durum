@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8003/analyze-fused";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8085/analyze-fused";
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 
 const extFromMime = (mime) => {

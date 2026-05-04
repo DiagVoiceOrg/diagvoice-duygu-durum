@@ -1,7 +1,12 @@
+import contextlib
 import io
+import logging
 import os
 import tempfile
+import threading
+import time
 import traceback
+from typing import Any
 
 import fastapi
 import librosa
@@ -11,6 +16,7 @@ import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydub import AudioSegment
+from starlette.concurrency import run_in_threadpool
 from transformers import AutoModel
 
 
@@ -29,6 +35,20 @@ ENABLE_VAD = os.environ.get("AUDIO_ENABLE_VAD", "1").strip() not in {"0", "false
 VAD_TOP_DB = float(os.environ.get("AUDIO_VAD_TOP_DB", "25"))
 VAD_MAX_KEEP_SEC = float(os.environ.get("AUDIO_VAD_MAX_KEEP_SEC", "30"))
 VAD_MAX_KEEP_SEC = max(1.0, min(120.0, VAD_MAX_KEEP_SEC))
+
+_log = logging.getLogger("diagvoice.voice_sentiment")
+_log.setLevel(getattr(logging, os.environ.get("DIAGVOICE_LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not _log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [diagvoice.voice_sentiment] %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
+_infer_lock = threading.Lock()
+_VOICE_SENTIMENT_USE_INFER_LOCK = os.environ.get("VOICE_SENTIMENT_USE_INFER_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
 
 
 class AttentivePool(nn.Module):
@@ -150,6 +170,13 @@ def decode_audio_to_16k_mono_float32(audio_bytes: bytes, filename: str):
 
 
 def decode_audio_file_to_16k_mono_float32(path: str):
+    try:
+        y, sr = librosa.load(path, sr=TARGET_SR, mono=True)
+        if y is not None and len(y) > 0:
+            return y.astype("float32"), int(sr)
+    except Exception:
+        pass
+
     audio_segment = AudioSegment.from_file(path)
     audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
     wav_buffer = io.BytesIO()
@@ -159,7 +186,7 @@ def decode_audio_file_to_16k_mono_float32(path: str):
     y, sr = librosa.load(wav_buffer, sr=TARGET_SR, mono=True)
     if y is None or len(y) == 0:
         raise RuntimeError("Empty audio")
-    return y.astype("float32"), sr
+    return y.astype("float32"), int(sr)
 
 
 def preprocess_waveform(y, sr: int):
@@ -239,6 +266,54 @@ def make_crops(y, sr: int):
     return crops
 
 
+def _analyze_audio_sync(tmp_path: str) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    _cm = _infer_lock if _VOICE_SENTIMENT_USE_INFER_LOCK else contextlib.nullcontext()
+    with _cm:
+        t_dec = time.perf_counter()
+        y, sr = decode_audio_file_to_16k_mono_float32(tmp_path)
+        y = apply_vad(y, sr)
+        decode_vad_ms = (time.perf_counter() - t_dec) * 1000
+
+        if model is None:
+            raise RuntimeError("Model not loaded")
+
+        crops = make_crops(y, sr)
+        t_inf = time.perf_counter()
+        x = torch.stack([torch.from_numpy(c) for c in crops], dim=0).to(device)
+        with torch.no_grad():
+            logits, intensity = model(x)
+            probs_batch = torch.softmax(logits, dim=-1).detach().cpu()
+            intensity_batch = intensity.detach().cpu()
+
+            probs_mean = probs_batch.mean(dim=0)
+            probs = probs_mean.tolist()
+            pred_id = int(torch.argmax(probs_mean, dim=-1).item())
+            intensity_value = float(intensity_batch.mean().item())
+        infer_ms = (time.perf_counter() - t_inf) * 1000
+
+        out = {
+            "pred_id": pred_id,
+            "pred_label": ID2LABEL.get(pred_id),
+            "probs": probs,
+            "intensity": intensity_value,
+            "sample_rate": sr,
+            "duration_sec": float(len(y) / sr),
+            "num_segments": int(len(crops)),
+            "labels": ID2LABEL,
+        }
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    _log.info(
+        "analyze_audio_done crops=%d decode_vad_ms=%.0f infer_ms=%.0f total_ms=%.0f",
+        len(crops),
+        decode_vad_ms,
+        infer_ms,
+        total_ms,
+    )
+    return out
+
+
 @app.get("/")
 async def root():
     return {
@@ -259,6 +334,7 @@ async def analyze_audio(file: UploadFile = File(...)):
         if file.filename:
             safe = file.filename.replace("/", "_").replace("\\", "_")
             suffix = f"_{safe}"
+        t_recv = time.perf_counter()
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp_path = tmp.name
             while True:
@@ -266,34 +342,13 @@ async def analyze_audio(file: UploadFile = File(...)):
                 if not chunk:
                     break
                 tmp.write(chunk)
+        recv_ms = (time.perf_counter() - t_recv) * 1000
+        nbytes = os.path.getsize(tmp_path) if tmp_path else 0
+        _log.info("analyze_audio_begin file=%s bytes=%d recv_ms=%.0f", file.filename or "", nbytes, recv_ms)
 
-        y, sr = decode_audio_file_to_16k_mono_float32(tmp_path)
-        y = apply_vad(y, sr)
-
-        crops = make_crops(y, sr)
-        x = torch.stack([torch.from_numpy(c) for c in crops], dim=0).to(device)
-        with torch.no_grad():
-            logits, intensity = model(x)
-            probs_batch = torch.softmax(logits, dim=-1).detach().cpu()
-            intensity_batch = intensity.detach().cpu()
-
-            probs_mean = probs_batch.mean(dim=0)
-            probs = probs_mean.tolist()
-            pred_id = int(torch.argmax(probs_mean, dim=-1).item())
-            intensity_value = float(intensity_batch.mean().item())
-
-        return {
-            "pred_id": pred_id,
-            "pred_label": ID2LABEL.get(pred_id),
-            "probs": probs,
-            "intensity": intensity_value,
-            "sample_rate": sr,
-            "duration_sec": float(len(y) / sr),
-            "num_segments": int(len(crops)),
-            "labels": ID2LABEL,
-        }
+        return await run_in_threadpool(_analyze_audio_sync, tmp_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Audio analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Audio analysis failed: {e}") from e
     finally:
         try:
             if tmp_path and os.path.exists(tmp_path):
@@ -303,4 +358,5 @@ async def analyze_audio(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    _port = int(os.environ.get("VOICE_TO_SENTIMENT_PORT", "8052"))
+    uvicorn.run(app, host="0.0.0.0", port=_port)

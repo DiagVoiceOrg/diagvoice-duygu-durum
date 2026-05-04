@@ -93,6 +93,11 @@ def validate_transcript_meaningfulness(
     if reject:
         return False, rep_reason
 
+    # Harici LLM varsayılan KAPALI; yalnızca DEEPSEEK_TRANSCRIPT_VALIDATION=1 iken DeepSeek çağrılır.
+    llm_on = os.environ.get("DEEPSEEK_TRANSCRIPT_VALIDATION", "").strip().lower() in ("1", "true", "yes")
+    if not llm_on:
+        return True, "deepseek_llm_disabled_heuristic_only"
+
     key = (api_key or "").strip()
     if not key:
         return True, "deepseek_api_key_yok_doğrulama_atlandı"

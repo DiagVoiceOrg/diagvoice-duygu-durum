@@ -3,9 +3,12 @@
 DiagVoice benchmark inference — Flask HTTP katmanı.
 Motor: inference_api.engine
 
+CPU notu: analyze-fused ile aynı makinede paralel çalışırsa sklearn/feature yolu rekabet eder;
+benchmark gerekmezse kök ortamda INFERENCE_API_URL boş bırakın.
+
 Çalıştırma (Docker içi örnek):
   DIAGVOICE_BENCHMARK_CONFIG=/app/inference_api/config.docker.yaml \\
-  python -m flask --app inference_api.app run --host 127.0.0.1 --port 5008
+  python -m flask --app inference_api.app run --host 127.0.0.1 --port 8053
 """
 
 from __future__ import annotations

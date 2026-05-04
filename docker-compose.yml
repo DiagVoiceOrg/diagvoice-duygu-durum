@@ -1,0 +1,25 @@
+# Kod: ./diagvoice-backend -> /app volume ile anında yansır (hot reload yok; kod değişince konteyner restart).
+# HF önbelleği: bind mount /app altında kaybolmasın diye ayrı volume.
+services:
+  backend:
+    build:
+      context: ./diagvoice-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    env_file:
+      - .env
+    environment:
+      CMS_ENABLED: ${CMS_ENABLED:-1}
+      MONGO_URI: ${MONGO_URI:?MONGO_URI tanımlı olmalı — kök .env içinde harici Mongo bağlantı dizesi}
+      MONGO_DB: ${MONGO_DB:-diagvoice_cms}
+      JWT_SECRET: ${JWT_SECRET:-dev-change-me}
+      CMS_ADMIN_EMAIL: ${CMS_ADMIN_EMAIL:-admin@localhost}
+      CMS_ADMIN_PASSWORD: ${CMS_ADMIN_PASSWORD:-admin123}
+    volumes:
+      - ./diagvoice-backend:/app
+      - backend_hf_cache:/app/.cache
+
+volumes:
+  backend_hf_cache:

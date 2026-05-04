@@ -1,19 +1,23 @@
-import fastapi
-import uvicorn
-import librosa
-import torch
-import numpy as np
+import contextlib
 import io
-import tempfile
+import logging
 import os
+import tempfile
+import threading
+import time
 import traceback
-from pathlib import Path
-from fastapi import UploadFile, File, Form, HTTPException
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+
+import fastapi
+import librosa
+import numpy as np
+import torch
+import uvicorn
+from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydub import AudioSegment
+from starlette.concurrency import run_in_threadpool
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
-# FastAPI uygulamasını başlat
 app = fastapi.FastAPI()
 
 _cors_origins_raw = os.environ.get(
@@ -22,13 +26,43 @@ _cors_origins_raw = os.environ.get(
 )
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
-# CORS middleware'ini ekle
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+STT_CHUNK_SEC = float(os.environ.get("STT_CHUNK_SEC", "25"))
+STT_CHUNK_SEC = max(5.0, min(120.0, STT_CHUNK_SEC))
+STT_NUM_BEAMS = max(1, int(os.environ.get("STT_NUM_BEAMS", "1")))
+STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "256")))
+_max_audio_raw = os.environ.get("VOICE_TO_TEXT_MAX_AUDIO_SEC", "0").strip()
+VOICE_TO_TEXT_MAX_AUDIO_SEC = float(_max_audio_raw) if _max_audio_raw else 0.0
+if VOICE_TO_TEXT_MAX_AUDIO_SEC > 0:
+    VOICE_TO_TEXT_MAX_AUDIO_SEC = max(1.0, min(3600.0, VOICE_TO_TEXT_MAX_AUDIO_SEC))
+
+_log = logging.getLogger("diagvoice.stt")
+_log.setLevel(getattr(logging, os.environ.get("DIAGVOICE_LOG_LEVEL", "INFO").upper(), logging.INFO))
+if not _log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [diagvoice.stt] %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
+
+_stt_parallel_raw = int(os.environ.get("STT_MAX_PARALLEL_CHUNKS", "1"))
+if _stt_parallel_raw > 1:
+    _log.warning(
+        "STT_MAX_PARALLEL_CHUNKS=%s ignored (paylaşımlı Whisper modeli; güvenli değer 1).",
+        _stt_parallel_raw,
+    )
+
+_infer_lock = threading.Lock()
+_VOICE_TO_TEXT_USE_INFER_LOCK = os.environ.get("VOICE_TO_TEXT_USE_INFER_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
 )
 
 print("Starting server and loading model...")
@@ -42,20 +76,22 @@ try:
     processor = AutoProcessor.from_pretrained(model_id)
     speech_to_text_model = AutoModelForSpeechSeq2Seq.from_pretrained(
         model_id,
-        torch_dtype=dtype,
+        dtype=dtype,
         low_cpu_mem_usage=True,
     )
     speech_to_text_model.to(device)
     speech_to_text_model.eval()
     print("Model loaded successfully.")
-except Exception as e:
+except Exception:
     print("!!! FATAL: Failed to load model !!!")
     print(traceback.format_exc())
     processor = None
     speech_to_text_model = None
+    device = "cpu"
+    dtype = torch.float32
+
 
 def resolve_whisper_language(language: str | None) -> str:
-    """Map UI / short codes to Whisper decoder language ids (English names)."""
     if not language or not str(language).strip():
         return "turkish"
     key = str(language).strip().lower()
@@ -76,6 +112,95 @@ def resolve_whisper_language(language: str | None) -> str:
     return mapping.get(key, "turkish")
 
 
+def _load_audio_16k_mono(path: str) -> tuple[np.ndarray, int]:
+    sample_rate = 16000
+    try:
+        audio_input, sr = librosa.load(path, sr=sample_rate, mono=True)
+        if audio_input is not None and len(audio_input) > 0:
+            return audio_input.astype(np.float32), int(sr)
+    except Exception:
+        pass
+
+    try:
+        audio_segment = AudioSegment.from_file(path)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Audio conversion failed because ffmpeg/ffprobe was not found on the system. "
+                "Install ffmpeg and ensure it is on PATH, or upload a .wav file. "
+                f"Original error: {e}"
+            ),
+        ) from e
+
+    audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+    wav_buffer = io.BytesIO()
+    audio_segment.export(wav_buffer, format="wav")
+    wav_buffer.seek(0)
+    audio_input, sr = librosa.load(wav_buffer, sr=16000, mono=True)
+    return audio_input.astype(np.float32), int(sr)
+
+
+def _transcribe_sync(temp_file_path: str, whisper_lang: str) -> dict[str, str]:
+    t0 = time.perf_counter()
+    _cm = _infer_lock if _VOICE_TO_TEXT_USE_INFER_LOCK else contextlib.nullcontext()
+    with _cm:
+        if speech_to_text_model is None or processor is None:
+            raise RuntimeError("Model is not loaded.")
+
+        t_load = time.perf_counter()
+        audio_input, sample_rate = _load_audio_16k_mono(temp_file_path)
+        load_ms = (time.perf_counter() - t_load) * 1000
+
+        if VOICE_TO_TEXT_MAX_AUDIO_SEC > 0:
+            max_samples = int(VOICE_TO_TEXT_MAX_AUDIO_SEC * sample_rate)
+            if len(audio_input) > max_samples:
+                audio_input = audio_input[:max_samples]
+                _log.info("audio_trimmed_to_sec=%s", VOICE_TO_TEXT_MAX_AUDIO_SEC)
+
+        chunk_size = int(STT_CHUNK_SEC * sample_rate)
+        total_samples = len(audio_input)
+        chunk_texts: list[str] = []
+        t_gen = time.perf_counter()
+        for start_idx in range(0, total_samples, chunk_size):
+            end_idx = min(start_idx + chunk_size, total_samples)
+            chunk = audio_input[start_idx:end_idx]
+
+            input_features = processor(
+                chunk.astype(np.float32),
+                sampling_rate=sample_rate,
+                return_tensors="pt",
+            )
+            features = input_features["input_features"].to(device=device, dtype=dtype)
+
+            with torch.no_grad():
+                gen_kw: dict = dict(
+                    input_features=features,
+                    language=whisper_lang,
+                    task="transcribe",
+                    max_new_tokens=STT_MAX_NEW_TOKENS,
+                    num_beams=STT_NUM_BEAMS,
+                )
+                generated_ids = speech_to_text_model.generate(**gen_kw)
+
+            chunk_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+            if chunk_text:
+                chunk_texts.append(chunk_text)
+
+        gen_ms = (time.perf_counter() - t_gen) * 1000
+        total_ms = (time.perf_counter() - t0) * 1000
+        _log.info(
+            "transcribe_done load_ms=%.0f generate_ms=%.0f total_ms=%.0f samples=%d chunks=%d",
+            load_ms,
+            gen_ms,
+            total_ms,
+            total_samples,
+            max(1, (total_samples + chunk_size - 1) // chunk_size),
+        )
+
+    return {"text": " ".join(chunk_texts).strip(), "language": whisper_lang}
+
+
 @app.get("/")
 async def root():
     return {
@@ -89,124 +214,47 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     language: str = Form("turkish"),
 ):
-    """
-    Yüklenen ses dosyasını (m4a, mp4, wav, vb.) metne çevirir.
-    pydub kullanmak için sistemde ffmpeg yüklü olmalıdır.
-    Bu versiyon, dosyayı diskte geçici olarak saklayarak bellek kullanımını optimize eder.
-    """
-    print("\n--- Received new transcription request ---")
     if speech_to_text_model is None or processor is None:
-        print("Error: Model is not loaded.")
         raise HTTPException(status_code=500, detail="Model could not be loaded. Check server logs.")
 
     whisper_lang = resolve_whisper_language(language)
-    print(f"STT form language={language!r} -> whisper_lang={whisper_lang!r}")
+    _log.info("transcribe_begin file=%s language=%s", file.filename, whisper_lang)
 
     temp_file_path = None
     try:
-        # Adım 1: Dosyayı geçici bir konuma kaydet
-        print(f"Step 1: Saving uploaded file '{file.filename}' to a temporary location.")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
+        suffix = ""
+        if file.filename:
+            safe = str(file.filename).replace("/", "_").replace("\\", "_")
+            suffix = f"_{safe}"
+        t_recv = time.perf_counter()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             while True:
                 chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
                 temp_file.write(chunk)
             temp_file_path = temp_file.name
-        print(f"Step 2: File saved to temporary path: {temp_file_path}")
+        recv_ms = (time.perf_counter() - t_recv) * 1000
+        nbytes = os.path.getsize(temp_file_path) if temp_file_path else 0
+        _log.info("upload_saved bytes=%d recv_ms=%.0f", nbytes, recv_ms)
 
-        suffix = Path(file.filename or "").suffix.lower()
-        if suffix == ".wav":
-            # WAV dosyaları için ffmpeg/pydub gerekmez.
-            print("Step 3: Detected WAV input. Loading directly with librosa (no ffmpeg required)...")
-            audio_input, sample_rate = librosa.load(temp_file_path, sr=16000, mono=True)
-        else:
-            # Adım 3: pydub ile sesi yükleyip dönüştür
-            # (m4a/mp4 gibi formatlarda ffmpeg/ffprobe gerekir)
-            print("Step 3: Converting audio to WAV format using pydub...")
-            try:
-                audio_segment = AudioSegment.from_file(temp_file_path)
-            except FileNotFoundError as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        "Audio conversion failed because ffmpeg/ffprobe was not found on the system. "
-                        "Install ffmpeg and ensure it is on PATH, or upload a .wav file. "
-                        f"Original error: {e}"
-                    ),
-                )
-
-            # 16kHz, mono, 16-bit PCM WAV olarak ayarla
-            audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-
-            wav_buffer = io.BytesIO()
-            audio_segment.export(wav_buffer, format="wav")
-            wav_buffer.seek(0)
-            print("Step 4: Audio successfully converted to WAV in memory.")
-
-            # Adım 5: librosa ile WAV verisini yükle
-            print("Step 5: Loading WAV data with librosa...")
-            audio_input, sample_rate = librosa.load(wav_buffer, sr=16000, mono=True)
-        print(f"Step 6: Loaded audio with librosa. Sample rate: {sample_rate}, Duration: {len(audio_input)/sample_rate:.2f}s.")
-
-        # Adım 7: Uzun kayıtları 25s'lik parçalara böl ve sırayla çöz
-        max_chunk_duration = 25  # saniye
-        chunk_size = int(max_chunk_duration * sample_rate)
-        total_samples = len(audio_input)
-        chunk_texts = []
-        print(f"Step 7: Splitting audio into ~{max_chunk_duration}s chunks with {chunk_size} samples each.")
-
-        for start_idx in range(0, total_samples, chunk_size):
-            end_idx = min(start_idx + chunk_size, total_samples)
-            chunk = audio_input[start_idx:end_idx]
-            chunk_duration = (end_idx - start_idx) / sample_rate
-            print(f"  - Processing chunk {len(chunk_texts)+1} covering samples {start_idx}:{end_idx} (~{chunk_duration:.2f}s)")
-
-            input_features = processor(
-                chunk.astype(np.float32),
-                sampling_rate=sample_rate,
-                return_tensors="pt",
-            )
-            features = input_features["input_features"].to(device=device, dtype=dtype)
-
-            with torch.no_grad():
-                # Dil için `language=` + `task=` kullan (HF Whisper önerisi). Eski `forced_decoder_ids`
-                # ile checkpoint'teki varsayılan çakışabiliyor; `get_decoder_prompt_ids` da tokenizer'da
-                # paylaşımlı state değiştirir (eşzamanlı isteklerde risk).
-                generated_ids = speech_to_text_model.generate(
-                    input_features=features,
-                    language=whisper_lang,
-                    task="transcribe",
-                    max_new_tokens=256,
-                )
-
-            chunk_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-            if chunk_text:
-                chunk_texts.append(chunk_text)
-
-        full_transcription = " ".join(chunk_texts).strip()
-        print("Step 8: Chunked transcription successful.")
-
-        return {"text": full_transcription, "language": whisper_lang}
-
+        return await run_in_threadpool(_transcribe_sync, temp_file_path, whisper_lang)
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"!!! AN ERROR OCCURRED: {e} !!!")
-        print("--- Full Traceback ---")
-        print(traceback.format_exc())
-        print("----------------------")
+        _log.exception("transcribe_failed")
         raise HTTPException(
             status_code=500,
-            detail=f"An internal server error occurred during transcription. Check server logs. Error: {e}"
-        )
+            detail=f"An internal server error occurred during transcription. Check server logs. Error: {e}",
+        ) from e
     finally:
-        # Adım 9: Geçici dosyayı sil
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
-                print(f"Step 9: Temporary file {temp_file_path} deleted.")
-            except PermissionError as e:
-                print(f"Step 9: Failed to delete temporary file {temp_file_path}: {e}")
+            except PermissionError:
+                pass
+
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
-
+    _port = int(os.environ.get("VOICE_TO_TEXT_PORT", "8051"))
+    uvicorn.run(app, host="0.0.0.0", port=_port)

@@ -15,10 +15,11 @@ const sampleAudios = [
   { name: 'Test 6', path: test6, fileName: 'test6.wav' },
 ];
 
-const SampleAudioPlayer = ({ onSampleSelect }) => {
+const SampleAudioPlayer = ({ onSampleSelect, disabled = false }) => {
   const [active, setActive] = useState(sampleAudios[0]);
 
   const handleSelect = async (audio) => {
+    if (disabled) return;
     try {
       const response = await fetch(audio.path);
       const blob = await response.blob();
@@ -34,7 +35,7 @@ const SampleAudioPlayer = ({ onSampleSelect }) => {
   };
 
   return (
-    <div className="card card-sample">
+    <div className={`card card-sample${disabled ? ' card-disabled' : ''}`}>
       <h2>Örnek sesler</h2>
       <p className="sample-picker-hint">
         Bir örnek seçin; aynı alandan dinleyip analizi başlatabilirsiniz.
@@ -49,6 +50,7 @@ const SampleAudioPlayer = ({ onSampleSelect }) => {
               role="option"
               aria-selected={isActive}
               className={`sample-chip${isActive ? ' is-active' : ''}`}
+              disabled={disabled}
               onClick={() => setActive(audio)}
             >
               {audio.name}
@@ -69,6 +71,7 @@ const SampleAudioPlayer = ({ onSampleSelect }) => {
         <button
           type="button"
           className="sample-analyze-btn"
+          disabled={disabled}
           onClick={() => handleSelect(active)}
         >
           {active.name} — Analiz et

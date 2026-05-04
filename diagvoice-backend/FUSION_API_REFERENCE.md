@@ -75,14 +75,14 @@ curl -X GET "https://aiapi.diagvoice.com/"
 {
   "message": "Fusion service. POST audio to /analyze-fused.",
   "deps": {
-    "voice_to_text": "http://localhost:8001/transcribe",
-    "text_to_sentiment": "http://localhost:8000/analyze",
-    "voice_to_sentiment": "http://localhost:8002/analyze-audio",
-    "disease_service": "http://localhost:8004/analyze-disease",
-    "mental_fitness": "http://localhost:8005/analyze-mental",
-    "age_gender": "http://localhost:8006/analyze-age-gender",
-    "depression_service": "http://localhost:8007/analyze-depression",
-    "benchmark_inference": "http://127.0.0.1:5008"
+    "voice_to_text": "http://localhost:8051/transcribe",
+    "text_to_sentiment": "http://localhost:8050/analyze",
+    "voice_to_sentiment": "http://localhost:8052/analyze-audio",
+    "disease_service": "http://localhost:8054/analyze-disease",
+    "mental_fitness": "http://localhost:8055/analyze-mental",
+    "age_gender": "http://localhost:8056/analyze-age-gender",
+    "depression_service": "http://localhost:8057/analyze-depression",
+    "benchmark_inference": "http://127.0.0.1:8053"
   }
 }
 ```
