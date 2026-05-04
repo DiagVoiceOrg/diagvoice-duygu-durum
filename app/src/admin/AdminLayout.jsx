@@ -26,7 +26,7 @@ export default function AdminLayout() {
           className="tab-button secondary"
           onClick={() => {
             logout();
-            nav('/admin/login', { replace: true });
+            nav('/', { replace: true });
           }}
         >
           Çıkış

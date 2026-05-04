@@ -85,6 +85,12 @@ export default function DemoHome({
   const [confidenceResult, setConfidenceResult] = useState(null);
   const [benchmarkV2Result, setBenchmarkV2Result] = useState(null);
   const [benchmarkV2Error, setBenchmarkV2Error] = useState(null);
+  const [textSttError, setTextSttError] = useState(null);
+  const [sentimentPipelineError, setSentimentPipelineError] = useState(null);
+  const [audioEmotionError, setAudioEmotionError] = useState(null);
+  const [diseaseError, setDiseaseError] = useState(null);
+  const [mentalFitnessError, setMentalFitnessError] = useState(null);
+  const [depressionError, setDepressionError] = useState(null);
   const [error, setError] = useState('');
   const [currentAnalysisSource, setCurrentAnalysisSource] = useState('');
   const [activePage, setActivePage] = useState('summary');
@@ -104,11 +110,23 @@ export default function DemoHome({
     setConfidenceResult(null);
     setBenchmarkV2Result(null);
     setBenchmarkV2Error(null);
+    setTextSttError(null);
+    setSentimentPipelineError(null);
+    setAudioEmotionError(null);
+    setDiseaseError(null);
+    setMentalFitnessError(null);
+    setDepressionError(null);
     setCurrentAnalysisSource(sourceName);
 
     try {
       const result = await analyzeByProfileCards(audioBlob, profileCards, lang);
       setTranscribedText(result.text || '');
+      setTextSttError(typeof result.text_error === 'string' ? result.text_error : null);
+      setSentimentPipelineError(typeof result.text_sentiment_error === 'string' ? result.text_sentiment_error : null);
+      setAudioEmotionError(typeof result.audio_error === 'string' ? result.audio_error : null);
+      setDiseaseError(typeof result.disease_error === 'string' ? result.disease_error : null);
+      setMentalFitnessError(typeof result.mental_fitness_error === 'string' ? result.mental_fitness_error : null);
+      setDepressionError(typeof result.depression_error === 'string' ? result.depression_error : null);
 
       if (result.text_sentiment) {
         setSentimentResult({
@@ -564,7 +582,22 @@ export default function DemoHome({
         {activePage === 'details' && (
           <ModelDetailsPage
             demoLang={lang}
+            profileCards={profileCards}
+            orderedCardIds={order}
+            transcribedText={transcribedText}
+            textSttError={textSttError}
+            audioEmotionError={audioEmotionError}
+            diseaseError={diseaseError}
+            benchmarkV2Error={benchmarkV2Error}
+            mentalFitnessError={mentalFitnessError}
+            depressionError={depressionError}
+            sentimentPipelineError={sentimentPipelineError}
             audioEmotionResult={audioEmotionResult}
+            diseaseResult={diseaseResult}
+            benchmarkV2Result={benchmarkV2Result}
+            mentalFitnessResult={mentalFitnessResult}
+            depressionResult={depressionResult}
+            sentimentResult={sentimentResult}
             ageGenderResult={ageGenderResult}
             ageGenderError={ageGenderError}
             valenceResult={valenceResult}

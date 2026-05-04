@@ -1,12 +1,21 @@
 import React from 'react';
+import { mergeCardCopy } from '../lib/cardCopy';
 import {
   demoT,
+  depressionRiskUiLabel,
+  emotionUiLabel,
   genderUiLabel,
   normalizeDemoLang,
 } from '../i18n/demoUi';
 
 function formatPct01(v, digits = 0) {
   if (typeof v !== 'number' || Number.isNaN(v)) return null;
+  return `${(v * 100).toFixed(digits)}%`;
+}
+
+function formatPct01FromUnit(v, digits = 2) {
+  if (typeof v !== 'number' || Number.isNaN(v)) return null;
+  if (v > 1.000001) return `${v.toFixed(digits)}%`;
   return `${(v * 100).toFixed(digits)}%`;
 }
 
@@ -36,6 +45,33 @@ function ProbBarRow({ label, value, color }) {
   );
 }
 
+function DetailKv({ label, value }) {
+  if (value === null || value === undefined || value === '') return null;
+  return (
+    <div className="result-row md-detail-row">
+      <span className="result-label">{label}</span>
+      <span className="result-value md-detail-pre-wrap">{String(value)}</span>
+    </div>
+  );
+}
+
+function DetailCard({ title, subtitle, chromaIndicator, warn, footnote, children }) {
+  return (
+    <div className="card health-card md-detail-card">
+      <div className="card-header">
+        {chromaIndicator && <div className="fusion-indicator" style={chromaIndicator} />}
+        <h2>{title}</h2>
+      </div>
+      {subtitle ? (
+        <div className="profile-confidence md-detail-sub">{subtitle}</div>
+      ) : null}
+      {warn ? <div className="error md-detail-error">{warn}</div> : null}
+      {children}
+      {footnote ? <p className="card-footnote md-detail-foot">{footnote}</p> : null}
+    </div>
+  );
+}
+
 const GENDER_COLOR = {
   male: '#3b82f6',
   female: '#ec4899',
@@ -43,15 +79,52 @@ const GENDER_COLOR = {
 const AGEBIN_LABELS = ['15-24', '25-34', '35-44', '45-54', '55-64'];
 const AGE_DISPLAY_SHIFT_BINS = 1;
 
+/**
+ * @param {object} props
+ * @param {string} props.demoLang
+ * @param {Array<{ id: string }>|null} props.profileCards
+ * @param {string[]} props.orderedCardIds
+ * @param {string} [props.transcribedText]
+ * @param {string|null} [props.textSttError]
+ * @param {string|null} [props.audioEmotionError]
+ * @param {string|null} [props.diseaseError]
+ * @param {string|null} [props.benchmarkV2Error]
+ * @param {string|null} [props.mentalFitnessError]
+ * @param {string|null} [props.depressionError]
+ * @param {string|null} [props.sentimentPipelineError]
+ * @param {object|null} [props.audioEmotionResult]
+ * @param {object|null} [props.diseaseResult]
+ * @param {object|null} [props.benchmarkV2Result]
+ * @param {object|null} [props.mentalFitnessResult]
+ * @param {object|null} [props.depressionResult]
+ * @param {{ sentiment: string|null, score: number|null }} [props.sentimentResult]
+ */
 export default function ModelDetailsPage({
   demoLang = 'tr',
+  profileCards,
+  orderedCardIds = [],
+  transcribedText = '',
+  textSttError = null,
+  audioEmotionError = null,
+  diseaseError = null,
+  benchmarkV2Error = null,
+  mentalFitnessError = null,
+  depressionError = null,
+  sentimentPipelineError = null,
   audioEmotionResult,
+  diseaseResult,
+  benchmarkV2Result,
+  mentalFitnessResult,
+  depressionResult,
+  sentimentResult = { sentiment: null, score: null },
   ageGenderResult,
   ageGenderError,
   valenceResult,
   confidenceResult,
 }) {
   const lang = normalizeDemoLang(demoLang);
+
+  const order = orderedCardIds.length ? orderedCardIds : [];
 
   const gender = ageGenderResult?.gender;
   const agebin = ageGenderResult?.agebin;
@@ -97,33 +170,263 @@ export default function ModelDetailsPage({
       n: String(idx + 1),
     });
 
-  const renderEmotionDistribution = () => {
-    if (!Array.isArray(audioEmotionResult?.probs) || audioEmotionResult.probs.length === 0) {
-      return null;
-    }
+  const hasFusionPanels =
+    valenceText !== null ||
+    valenceAudio !== null ||
+    fusedValence !== null ||
+    typeof confidenceText === 'number' ||
+    typeof confidenceAudio === 'number' ||
+    typeof disagreement === 'number';
 
-    return (
-      <div className="card health-card" style={{ paddingTop: 18 }}>
-        <div className="card-header">
-          <div className="fusion-indicator" />
-          <h2>{demoT(lang, 'mdEmotionDistrib')}</h2>
-        </div>
-        <div className="profile-confidence" style={{ marginBottom: '0.75rem' }}>
-          {demoT(lang, 'mdEmotionDistribSrc')}
-        </div>
-        <div className="prob-section">
-          {audioEmotionResult.probs.map((prob, idx) => (
-            <ProbBarRow
-              key={`${emotionLabels[idx] || classLabelForIndex(idx)}-${idx}`}
-              label={emotionLabels[idx] || classLabelForIndex(idx)}
-              value={prob}
-              color={emotionColors[idx] || '#94a3b8'}
+  const showFusionExtras =
+    order.includes('sentiment') && order.includes('audio_emotion') && hasFusionPanels;
+
+  /** @returns {React.ReactElement | null} */
+  function detailBlockFor(cardId) {
+    const copy = mergeCardCopy(cardId, profileCards);
+
+    switch (cardId) {
+      case 'transcript': {
+        const hasTxt = !!(transcribedText && transcribedText.trim());
+        const hasErr = !!(textSttError && textSttError.trim());
+        if (!hasTxt && !hasErr) {
+          return (
+            <DetailCard key={cardId} title={copy.displayTitle}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        return (
+          <DetailCard
+            key={cardId}
+            title={`${copy.displayTitle}`}
+            subtitle={demoT(lang, 'mdSttIntro')}
+            warn={hasErr ? `${demoT(lang, 'mdSttErrorTitle')}: ${textSttError}` : null}
+            footnote={copy.footnote ?? undefined}
+          >
+            <div className="md-transcript-block">
+              {hasTxt ? <blockquote className="md-transcript-quote">&ldquo;{transcribedText}&rdquo;</blockquote> : null}
+            </div>
+          </DetailCard>
+        );
+      }
+
+      case 'audio_emotion': {
+        if (!audioEmotionResult && !audioEmotionError) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        return (
+          <DetailCard
+            key={cardId}
+            title={`${copy.displayTitle}`}
+            subtitle={demoT(lang, 'mdAudioMetaTitle')}
+            warn={audioEmotionError || null}
+          >
+            <h4 className="md-detail-h4">{demoT(lang, 'mdPredSummary')}</h4>
+            <DetailKv label={demoT(lang, 'mdPredLabel')} value={emotionUiLabel(lang, audioEmotionResult?.pred_label)} />
+            <DetailKv
+              label={demoT(lang, 'mdPredId')}
+              value={
+                typeof audioEmotionResult?.pred_id === 'number' ? String(audioEmotionResult.pred_id) : undefined
+              }
             />
-          ))}
-        </div>
-      </div>
-    );
-  };
+            <DetailKv
+              label={demoT(lang, 'mdIntensityPct')}
+              value={
+                typeof audioEmotionResult?.intensity === 'number'
+                  ? formatPct01FromUnit(audioEmotionResult.intensity, 1)
+                  : undefined
+              }
+            />
+
+            <h4 className="md-detail-h4">{demoT(lang, 'mdClassProbsFull')}</h4>
+            {Array.isArray(audioEmotionResult?.probs) && audioEmotionResult.probs.length > 0 ? (
+              <div className="prob-section">
+                {audioEmotionResult.probs.map((prob, idx) => (
+                  <ProbBarRow
+                    key={`${emotionLabels[idx] || classLabelForIndex(idx)}-${idx}`}
+                    label={emotionLabels[idx] || classLabelForIndex(idx)}
+                    value={prob}
+                    color={emotionColors[idx] || '#94a3b8'}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            )}
+          </DetailCard>
+        );
+      }
+
+      case 'disease': {
+        if (!diseaseResult && !diseaseError) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        return (
+          <DetailCard key={cardId} title={`${copy.displayTitle}`} warn={diseaseError || null}>
+            <DetailKv label={demoT(lang, 'mdPredLabel')} value={diseaseResult?.pred_label} />
+            <DetailKv label={demoT(lang, 'mdPredId')} value={diseaseResult?.pred_id ?? undefined} />
+
+            <h4 className="md-detail-h4">{demoT(lang, 'mdDiseaseRow')}</h4>
+            {Array.isArray(diseaseResult?.probs) && diseaseResult.probs.length >= 2 ? (
+              <div className="prob-section">
+                <ProbBarRow label={demoT(lang, 'probHealthy')} value={diseaseResult.probs[0]} color="#10b981" />
+                <ProbBarRow label={demoT(lang, 'probSick')} value={diseaseResult.probs[1]} color="#ef4444" />
+              </div>
+            ) : (
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            )}
+          </DetailCard>
+        );
+      }
+
+      case 'benchmark_v2': {
+        if (!benchmarkV2Result && !benchmarkV2Error) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+
+        const r = benchmarkV2Result;
+        const apiErr =
+          benchmarkV2Error ||
+          (r?.error ? (typeof r.error === 'string' ? r.error : JSON.stringify(r.error)) : null);
+
+        return (
+          <DetailCard key={cardId} title={`${copy.displayTitle}`} subtitle={demoT(lang, 'mdBenchFull')} warn={apiErr}>
+            {r && !r.error ? (
+              <>
+                {typeof r.positive_class_probability === 'number' ? (
+                  <DetailKv
+                    label={demoT(lang, 'mdBenchPositiveP')}
+                    value={formatPct01FromUnit(r.positive_class_probability, 2)}
+                  />
+                ) : null}
+                <DetailKv label={demoT(lang, 'mdBenchPredClass')} value={r.predicted_class ?? undefined} />
+                <DetailKv label={demoT(lang, 'mdBenchThrTuned')} value={r.threshold_tuned ?? undefined} />
+                <DetailKv label={demoT(lang, 'mdBenchThrObj')} value={r.threshold_objective ?? undefined} />
+                <DetailKv label={demoT(lang, 'modelModeLabel')} value={r.mode ?? undefined} />
+                <DetailKv label={demoT(lang, 'mdBenchHint')} value={r.class_names_hint ?? undefined} />
+              </>
+            ) : null}
+          </DetailCard>
+        );
+      }
+
+      case 'mental_fitness': {
+        if (!mentalFitnessResult && !mentalFitnessError) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        const m = mentalFitnessResult;
+        return (
+          <DetailCard key={cardId} title={`${copy.displayTitle}`} subtitle={demoT(lang, 'mdMentalFull')} warn={mentalFitnessError || null}>
+            <DetailKv label={demoT(lang, 'mdPredLabel')} value={m?.pred_label} />
+            <DetailKv label={demoT(lang, 'mdPredId')} value={m?.pred_id ?? undefined} />
+            <DetailKv
+              label={demoT(lang, 'mdMentalScore')}
+              value={typeof m?.mental_fitness_score === 'number' ? `${Number(m.mental_fitness_score).toFixed(1)}%` : undefined}
+            />
+            {Array.isArray(m?.probs) && m.probs.length > 0 ? (
+              <>
+                <h4 className="md-detail-h4">{demoT(lang, 'mdClassProbsFull')}</h4>
+                <div className="prob-section">
+                  {m.probs.map((p, idx) => (
+                    <ProbBarRow
+                      key={`mf-${idx}`}
+                      label={classLabelForIndex(idx)}
+                      value={p}
+                      color={idx === 0 ? '#10b981' : '#94a3b8'}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </DetailCard>
+        );
+      }
+
+      case 'depression': {
+        if (!depressionResult && !depressionError) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        const d = depressionResult;
+        return (
+          <DetailCard key={cardId} title={`${copy.displayTitle}`} subtitle={demoT(lang, 'mdDepFull')} warn={depressionError || null}>
+            <DetailKv label={demoT(lang, 'mdPredLabel')} value={d?.pred_label} />
+            <DetailKv label={demoT(lang, 'mdPredId')} value={d?.pred_id ?? undefined} />
+            <DetailKv label={demoT(lang, 'mdDepRisk')} value={d?.risk_level ? depressionRiskUiLabel(lang, d.risk_level) : undefined} />
+            <DetailKv
+              label={demoT(lang, 'mdDepProbFinal')}
+              value={
+                typeof d?.final_prob_depression === 'number' ? formatPct01FromUnit(d.final_prob_depression, 2) : undefined
+              }
+            />
+            <DetailKv label={demoT(lang, 'mdDepMean')} value={typeof d?.mean_prob_depression === 'number' ? formatPct01FromUnit(d.mean_prob_depression, 3) : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepMedian')} value={typeof d?.median_prob_depression === 'number' ? formatPct01FromUnit(d.median_prob_depression, 3) : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepTrim')} value={typeof d?.trimmed_mean_prob_depression === 'number' ? formatPct01FromUnit(d.trimmed_mean_prob_depression, 3) : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepStd')} value={typeof d?.std_prob_depression === 'number' ? d.std_prob_depression.toFixed(4) : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepSpan')} value={typeof d?.min_prob_depression === 'number' && typeof d?.max_prob_depression === 'number' ? `[${formatPct01FromUnit(d.min_prob_depression, 2)}, ${formatPct01FromUnit(d.max_prob_depression, 2)}]` : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepSegCount')} value={d?.segment_count ?? undefined} />
+            <DetailKv label={demoT(lang, 'mdDepReliability')} value={d?.reliability} />
+            <DetailKv label={demoT(lang, 'mdDepThreshold')} value={typeof d?.threshold === 'number' ? String(d.threshold) : undefined} />
+            <DetailKv label={demoT(lang, 'mdDepInstability')} value={typeof d?.is_unstable === 'boolean' ? (d.is_unstable ? 'true' : 'false') : undefined} />
+
+            {Array.isArray(d?.segment_probs) && d.segment_probs.length > 0 ? (
+              <details className="md-detail-details">
+                <summary>{demoT(lang, 'mdDepSegPreview')}</summary>
+                <pre className="md-detail-pre">{d.segment_probs.slice(0, 24).map((x) => x.toFixed(4)).join(', ')}</pre>
+              </details>
+            ) : null}
+          </DetailCard>
+        );
+      }
+
+      case 'sentiment': {
+        if (!sentimentResult?.sentiment && sentimentResult?.score === null && !sentimentPipelineError) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+
+        const sc = sentimentResult?.score;
+
+        return (
+          <DetailCard
+            key={cardId}
+            title={`${copy.displayTitle}`}
+            subtitle={`${demoT(lang, 'mdSentAnalysis')} · ${demoT(lang, 'mdSentPipelineTitle')}`}
+            warn={sentimentPipelineError || null}
+          >
+            <DetailKv label={demoT(lang, 'mdSentLabel')} value={sentimentResult?.sentiment ?? undefined} />
+            <DetailKv label={demoT(lang, 'mdSentScore')} value={sc !== null && sc !== undefined ? String(sc) : undefined} />
+          </DetailCard>
+        );
+      }
+
+      default:
+        return null;
+    }
+  }
 
   const renderAgeGender = () => {
     if (!gender && !agebin) return null;
@@ -136,8 +439,7 @@ export default function ModelDetailsPage({
 
     const agebinColor = '#f59e0b';
     const trGender = (label) => genderUiLabel(lang, label);
-    const oppositeGender =
-      genderPred === 'female' ? 'male' : genderPred === 'male' ? 'female' : null;
+    const oppositeGender = genderPred === 'female' ? 'male' : genderPred === 'male' ? 'female' : null;
 
     const getGenderLabelByIndex = (idx) => {
       if (genderPredId !== null && idx === genderPredId) return trGender(genderPred);
@@ -162,18 +464,7 @@ export default function ModelDetailsPage({
     })();
 
     return (
-      <div className="card wellness-card">
-        <div className="card-header">
-          <div className="profile-indicator" style={{ background: '#f59e0b' }} />
-          <h2>{demoT(lang, 'mdAgeGender')}</h2>
-        </div>
-
-        {ageGenderError && (
-          <div className="error" style={{ marginBottom: '1rem' }}>
-            {ageGenderError}
-          </div>
-        )}
-
+      <DetailCard title={demoT(lang, 'mdAgeGender')} chromaIndicator={{ background: '#f59e0b' }} warn={ageGenderError || null}>
         {gender && (
           <div className="profile-grid">
             <div className="profile-item">
@@ -238,7 +529,7 @@ export default function ModelDetailsPage({
             </>
           )}
         </div>
-      </div>
+      </DetailCard>
     );
   };
 
@@ -298,7 +589,7 @@ export default function ModelDetailsPage({
   const renderValenceBars = () => {
     if (valenceText === null && valenceAudio === null) return null;
     return (
-      <div className="card health-card" style={{ paddingTop: 18 }}>
+      <div className="card health-card md-detail-card" style={{ paddingTop: 18 }}>
         <div className="card-header">
           <div className="fusion-indicator" />
           <h2>{demoT(lang, 'mdValenceCompare')}</h2>
@@ -326,7 +617,7 @@ export default function ModelDetailsPage({
     if (!has) return null;
 
     return (
-      <div className="card health-card">
+      <div className="card health-card md-detail-card">
         <div className="card-header">
           <div className="fusion-indicator" />
           <h2>{demoT(lang, 'mdFusionConfTitle')}</h2>
@@ -367,11 +658,17 @@ export default function ModelDetailsPage({
 
   return (
     <div className="model-details-stack">
-      {renderEmotionDistribution()}
-      {renderAgeGender()}
-      {renderValence()}
-      {renderValenceBars()}
-      {renderConfidence()}
+      {order.map((cid) => detailBlockFor(cid))}
+
+      {ageGenderResult || ageGenderError ? renderAgeGender() : null}
+
+      {showFusionExtras ? (
+        <DetailCard title={demoT(lang, 'mdFusionExtrasTitle')} subtitle={demoT(lang, 'mdFusionExtrasHint')}>
+          {renderValence()}
+          {renderValenceBars()}
+          {renderConfidence()}
+        </DetailCard>
+      ) : null}
     </div>
   );
 }
