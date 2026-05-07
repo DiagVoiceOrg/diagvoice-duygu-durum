@@ -13,7 +13,7 @@ Inference için gerekli dosyalar (bu klasör kökü):
 | Dosya | Açıklama |
 |--------|-----------|
 | `config.json` | Model mimarisi ve `id2label` / `label2id` |
-| `model.safetensors` | Ağırlıklar (**Git’te takip edilmez**; build/S3/rsync ile bu klasöre koy) |
+| `../models/mental-fitness-forgpt.safetensors` | Ağırlıklar (**Git’te takip edilmez**; `diagvoice-backend/models/` altına koy veya `TURKISH_PSYCH_WEIGHTS_PATH`) |
 | `tokenizer.json` | Tokenizer |
 | `tokenizer_config.json` | Tokenizer ayarları |
 | `label_maps.json` | Eğitim/config ile uyumlu sınıf indeksi ↔ `label_id` string eşlemesi |
@@ -44,7 +44,8 @@ python mental_fitness_turkish_psych_classifier/app.py
 | Değişken | Varsayılan / not |
 |-----------|-------------------|
 | `TURKISH_PSYCH_CLASSIFIER_PORT` | `8058` |
-| `TURKISH_PSYCH_MODEL_DIR` | Bu klasörün mutlak yolu (`app.py` ile aynı dizin) |
+| `TURKISH_PSYCH_MODEL_DIR` | Config + tokenizer klasörü (`.../mental_fitness_turkish_psych_classifier`) |
+| `TURKISH_PSYCH_WEIGHTS_PATH` | `mental-fitness-forgpt.safetensors` mutlak yolu (varsayılan: `diagvoice-backend/models/mental-fitness-forgpt.safetensors`) |
 | `TURKISH_PSYCH_LABEL_MAPS` | `{MODEL_DIR}/label_maps.json` |
 | `TURKISH_PSYCH_CATEGORY_NAMES_TR` | Bu klasörde `psych_category_names_tr.json` |
 | `TURKISH_PSYCH_USE_INFER_LOCK` | `1` — eşzamanlı isteklerde tek iş parçacığı kuyruğu |

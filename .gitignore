@@ -18,9 +18,6 @@ logs/
 # Local data / cache
 .DS_Store
 
-# Backend model dosyaları (GitHub'a gönderme)
+# Backend model dosyaları (GitHub'a gönderme; mental-fitness-forgpt.safetensors dahil)
 diagvoice-backend/models/
 diagvoice-backend/**/models/
-
-# HF ağırlıklar (100MB+; S3/imaj/deploy ile kopyalanır)
-diagvoice-backend/mental_fitness_turkish_psych_classifier/model.safetensors

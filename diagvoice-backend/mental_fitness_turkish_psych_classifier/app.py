@@ -18,12 +18,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
-from transformers import pipeline
+from safetensors.torch import load_file
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, pipeline
 
 _ROOT = Path(__file__).resolve().parent
+_BACKEND_ROOT = _ROOT.parent
 _DEFAULT_MODEL_DIR = str(_ROOT)
 
 MODEL_DIR = os.environ.get("TURKISH_PSYCH_MODEL_DIR", _DEFAULT_MODEL_DIR).strip() or _DEFAULT_MODEL_DIR
+# Ağırlıklar ayrı dosyada (config/tokenizer hâlâ MODEL_DIR altında)
+_DEFAULT_WEIGHTS = _BACKEND_ROOT / "models" / "mental-fitness-forgpt.safetensors"
+WEIGHTS_PATH = Path(
+    os.environ.get("TURKISH_PSYCH_WEIGHTS_PATH", str(_DEFAULT_WEIGHTS))
+).resolve()
 LABEL_MAPS_PATH = Path(os.environ.get("TURKISH_PSYCH_LABEL_MAPS", str(Path(MODEL_DIR) / "label_maps.json")))
 CATEGORY_NAMES_PATH = Path(
     os.environ.get("TURKISH_PSYCH_CATEGORY_NAMES_TR", str(_ROOT / "psych_category_names_tr.json"))
@@ -83,12 +90,28 @@ def _normalize_raw_label_to_label_id(raw: str, id2label: Dict[str, str]) -> str:
 def _build_classifier():
     global _classifier
     device = 0 if torch.cuda.is_available() else -1
-    _log.info("Model yükleniyor: %s device=%s", MODEL_DIR, device)
+    if not WEIGHTS_PATH.is_file():
+        raise FileNotFoundError(
+            f"Türkçe psik ağırlık dosyası bulunamadı: {WEIGHTS_PATH}. "
+            "TURKISH_PSYCH_WEIGHTS_PATH ile yolu ayarlayın veya dosyayı diagvoice-backend/models/ altına koyun."
+        )
+    _log.info(
+        "Model yükleniyor: config/tokenizer=%s weights=%s device=%s",
+        MODEL_DIR,
+        WEIGHTS_PATH,
+        device,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+    config = AutoConfig.from_pretrained(MODEL_DIR)
+    model = AutoModelForSequenceClassification.from_config(config)
+    state_dict = load_file(str(WEIGHTS_PATH))
+    model.load_state_dict(state_dict, strict=True)
+    model.eval()
     # return_all_scores=True: tüm sınıfların skorları (tek etiketli modelde bile)
     _classifier = pipeline(
         "text-classification",
-        model=MODEL_DIR,
-        tokenizer=MODEL_DIR,
+        model=model,
+        tokenizer=tokenizer,
         return_all_scores=True,
         device=device,
     )
@@ -188,6 +211,7 @@ async def root():
     return {
         "message": "Türkçe psikolojik sinyal metin sınıflandırma (HF). POST /analyze JSON {text}.",
         "model_dir": MODEL_DIR,
+        "weights_path": str(WEIGHTS_PATH),
         "category_names_file": str(CATEGORY_NAMES_PATH) if CATEGORY_NAMES_PATH.is_file() else None,
     }
 
@@ -195,7 +219,7 @@ async def root():
 @app.get("/health")
 async def health():
     ok = _classifier is not None
-    return {"ok": ok, "model_dir": MODEL_DIR}
+    return {"ok": ok, "model_dir": MODEL_DIR, "weights_path": str(WEIGHTS_PATH)}
 
 
 @app.post("/analyze")
