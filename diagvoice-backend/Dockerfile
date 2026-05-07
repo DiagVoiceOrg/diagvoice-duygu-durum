@@ -18,6 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MENTAL_FITNESS_PORT=8055 \
     AGE_GENDER_PORT=8056 \
     DEPRESSION_SERVICE_PORT=8057 \
+    TURKISH_PSYCH_CLASSIFIER_PORT=8058 \
     FUSION_PORT=8085 \
     TEXT_TO_SENTIMENT_URL=http://127.0.0.1:8050/analyze \
     VOICE_TO_TEXT_URL=http://127.0.0.1:8051/transcribe \
@@ -26,6 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MENTAL_FITNESS_URL=http://127.0.0.1:8055/analyze-mental \
     AGE_GENDER_URL=http://127.0.0.1:8056/analyze-age-gender \
     DEPRESSION_SERVICE_URL=http://127.0.0.1:8057/analyze-depression \
+    TURKISH_PSYCH_CLASSIFIER_URL=http://127.0.0.1:8058/analyze \
     INFERENCE_API_URL=http://127.0.0.1:8053
 
 WORKDIR /app
@@ -55,11 +57,12 @@ COPY disease_service /app/disease_service
 COPY mental_fitness /app/mental_fitness
 COPY age-gender-model /app/age-gender-model
 COPY depression_service /app/depression_service
+COPY mental_fitness_turkish_psych_classifier /app/mental_fitness_turkish_psych_classifier
 COPY models /app/models
 COPY test-data /app/test-data
 COPY .env /app/.env
 
-# Ana API (fusion + CMS); mikro servisler konteyner içi 8050–8057.
+# Ana API (fusion + CMS); mikro servisler konteyner içi 8050–8058.
 EXPOSE 8085
 
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

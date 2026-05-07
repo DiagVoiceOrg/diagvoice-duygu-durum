@@ -151,6 +151,15 @@ DEPRESSION_SERVICE_URL = _ipv4_loopback_url(
     os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8057/analyze-depression")
 )
 
+# Türkçe psikolojik sinyal (HF metin sınıflandırma) — boş string ile kapatılabilir
+_turkish_psych_raw = os.environ.get("TURKISH_PSYCH_CLASSIFIER_URL")
+if _turkish_psych_raw is None:
+    TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url("http://127.0.0.1:8058/analyze")
+elif not str(_turkish_psych_raw).strip():
+    TURKISH_PSYCH_CLASSIFIER_URL = ""
+else:
+    TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url(str(_turkish_psych_raw).strip())
+
 # benchmark_v2 (inference_api Flask, iç ağ) — boş string ile kapatılabilir
 _inference_url_raw = os.environ.get("INFERENCE_API_URL")
 if _inference_url_raw is None:
@@ -678,6 +687,7 @@ async def root():
             "mental_fitness_validate_transcript": MENTAL_FITNESS_VALIDATE_URL,
             "age_gender": AGE_GENDER_URL,
             "depression_service": DEPRESSION_SERVICE_URL,
+            "turkish_psych_classifier": TURKISH_PSYCH_CLASSIFIER_URL or None,
             "benchmark_inference": INFERENCE_API_URL or None,
         },
         "proxy": {
@@ -698,6 +708,11 @@ async def root():
                 f"POST {INFERENCE_API_URL}/predict (internal) — field 'audio', form 'transcript'"
                 if INFERENCE_API_URL
                 else "disabled (INFERENCE_API_URL empty)"
+            ),
+            "turkish_psych_signals": (
+                "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi"
+                if TURKISH_PSYCH_CLASSIFIER_URL
+                else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
             ),
         },
         "fusion": {
@@ -798,6 +813,27 @@ async def proxy_analyze_benchmark_v2(file: UploadFile = File(...), transcript: s
         file_field_name="audio",
         extra_form_data={"transcript": transcript or ""},
         proxy_name="analyze-benchmark-v2",
+    )
+
+
+@app.post("/analyze-turkish-psych-signals")
+async def proxy_analyze_turkish_psych_signals(payload: Dict[str, Any] = Body(...)):
+    """
+    Türkçe psikolojik sinyal HF modeli (mental_fitness ses/metin servisinden bağımsız).
+    Gövde: {\"text\": \"...\"}
+    """
+    if not TURKISH_PSYCH_CLASSIFIER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Turkish psych classifier disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)",
+        )
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
+    return await _proxy_json(
+        TURKISH_PSYCH_CLASSIFIER_URL,
+        {"text": text},
+        proxy_name="analyze-turkish-psych-signals",
     )
 
 
