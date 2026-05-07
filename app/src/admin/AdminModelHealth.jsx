@@ -66,8 +66,9 @@ export default function AdminModelHealth() {
         <h1>Model durumu</h1>
         <p style={{ margin: '0.35rem 0 0', color: 'var(--text-muted)', maxWidth: '52rem' }}>
           Dahili çıkarım servislerinin sunucuda ayağa kalkıp yanıt verdiğini kontrol eder (Docker içinden
-          8050–8057 ve iş sağlığı Flask <code>/health</code>). Bu sonuç <strong>klinik doğrulama değildir</strong>
-          — yalnızca servis yaşam döngüsü ve benchmark model dosyası yükünü bildirir.
+          8050–8058 ve iş sağlığı Flask <code>/health</code>; Türkçe psik HF için ayrıca{' '}
+          <code>/health</code>). Bu sonuç <strong>klinik doğrulama değildir</strong>
+          — yalnızca servis yaşam döngüsü, benchmark ve HF ağırlık yükünü bildirir.
         </p>
       </div>
 

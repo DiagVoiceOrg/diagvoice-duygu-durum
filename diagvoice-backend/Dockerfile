@@ -61,8 +61,8 @@ COPY depression_service /app/depression_service
 COPY mental_fitness_turkish_psych_classifier /app/mental_fitness_turkish_psych_classifier
 COPY models /app/models
 COPY test-data /app/test-data
-COPY .env /app/.env
 
+# Ortam: docker-compose kök .env (env_file) veya orchestrator -e. /app/.env kopyalanmaz.
 # Ana API (fusion + CMS); mikro servisler konteyner içi 8050–8058.
 EXPOSE 8085
 

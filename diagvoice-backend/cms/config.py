@@ -2,14 +2,20 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Çalışma dizininden bağımsız: /app/.env (Docker) veya backend kökü
+# Tek kaynak: depo kökündeki .env (docker-compose env_file ile aynı dosya).
+# Konteynerde kök dosya yoksa (yalnızca compose ortam değişkenleri) ikinci olarak /app/.env dener.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
-_ENV_FILE = _BACKEND_ROOT / ".env"
+_REPO_ROOT = _BACKEND_ROOT.parent
+_ENV_CANDIDATES = [
+    _REPO_ROOT / ".env",
+    _BACKEND_ROOT / ".env",
+]
+_ENV_FILE = next((p for p in _ENV_CANDIDATES if p.is_file()), None)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(_ENV_FILE) if _ENV_FILE.is_file() else None,
+        env_file=str(_ENV_FILE) if _ENV_FILE is not None else None,
         env_file_encoding="utf-8",
         extra="ignore",
     )

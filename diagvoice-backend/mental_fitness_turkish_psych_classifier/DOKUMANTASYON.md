@@ -164,3 +164,7 @@ Yanıttaki `deps.turkish_psych_classifier` ve `proxy.turkish_psych_signals` alan
 - Bu servis **`/analyze-fused` zincirine eklenmedi**; istenen yerde yalnızca `POST /analyze-turkish-psych-signals` veya doğrudan `POST ...:8058/analyze` çağrılır.
 
 Sorular veya sözleşme değişiklikleri için Fusion tarafındaki `fusion_service/app.py` içinde `analyze-turkish-psych-signals` ve bu klasördeki `app.py` referans alınabilir.
+
+## 7. Admin panel — model durumu
+
+CMS endpoint’i `GET /admin/diagnostics/models-health` (admin JWT) bu servis için **`GET /health`** probu çalıştırır (`ok: true` ve HTTP 200 beklenir). Varsayılan URL: `http://127.0.0.1:8058/health` (`TURKISH_PSYCH_CLASSIFIER_PORT` ile uyumlu). Taramayı kapatmak için ortamda **`TURKISH_PSYCH_HEALTH_URL=`** (boş) bırakın. Özel URL için `TURKISH_PSYCH_HEALTH_URL` tam adres verin.

@@ -18,6 +18,9 @@ logs/
 # Local data / cache
 .DS_Store
 
+# Ortam (tek kaynak depo kökü .env — şablon: .env.example)
+.env
+
 # Backend model dosyaları (GitHub'a gönderme; mental-fitness-forgpt.safetensors dahil)
 diagvoice-backend/models/
 diagvoice-backend/**/models/
