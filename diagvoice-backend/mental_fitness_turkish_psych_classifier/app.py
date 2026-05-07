@@ -10,7 +10,7 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, MutableMapping, Optional
 
 import torch
 import uvicorn
@@ -87,6 +87,22 @@ def _normalize_raw_label_to_label_id(raw: str, id2label: Dict[str, str]) -> str:
     return s
 
 
+def _compat_layer_norm_state_dict(state_dict: MutableMapping[str, Any]) -> Dict[str, Any]:
+    """
+    Bazı eğitim çıktılarında LayerNorm TensorFlow tarzı gamma/beta anahtarları olur;
+    PyTorch transformers BERT weight/bias bekler.
+    """
+    out: Dict[str, Any] = {}
+    for k, v in state_dict.items():
+        nk = k
+        if ".LayerNorm.gamma" in k:
+            nk = k.replace(".LayerNorm.gamma", ".LayerNorm.weight")
+        elif ".LayerNorm.beta" in k:
+            nk = k.replace(".LayerNorm.beta", ".LayerNorm.bias")
+        out[nk] = v
+    return out
+
+
 def _build_classifier():
     global _classifier
     device = 0 if torch.cuda.is_available() else -1
@@ -104,7 +120,7 @@ def _build_classifier():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
     config = AutoConfig.from_pretrained(MODEL_DIR)
     model = AutoModelForSequenceClassification.from_config(config)
-    state_dict = load_file(str(WEIGHTS_PATH))
+    state_dict = _compat_layer_norm_state_dict(load_file(str(WEIGHTS_PATH)))
     model.load_state_dict(state_dict, strict=True)
     model.eval()
     # return_all_scores=True: tüm sınıfların skorları (tek etiketli modelde bile)
