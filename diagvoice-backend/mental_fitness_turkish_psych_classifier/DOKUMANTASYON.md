@@ -122,7 +122,7 @@ Fusion, isteği iç ağdaki Türkçe psik servisine iletir; HTTP durumu ve JSON 
 
 | Değişken | Açıklama |
 |----------|-----------|
-| `TURKISH_PSYCH_CLASSIFIER_URL` | Tam upstream URL, örn. `http://127.0.0.1:8058/analyze`. **Boş string** verilirse proxy devre dışı kalır ve bu endpoint `503` döner. |
+| `TURKISH_PSYCH_CLASSIFIER_URL` | Fusion’un `POST /analyze-turkish-psych-signals` proxy hedefi (örn. `http://127.0.0.1:8058/analyze`). **`/analyze-fused` bu değişkene bağlı değildir** — birleşik akışa dahil edilmez. **Boş string** = proxy kapalı (`503`). Dışarıda yalnızca `:8085` açıksa bu URL’nin dolu olması gerekir. |
 
 Dockerfile / `supervisord` varsayılanında iç URL: `http://127.0.0.1:8058/analyze`.
 

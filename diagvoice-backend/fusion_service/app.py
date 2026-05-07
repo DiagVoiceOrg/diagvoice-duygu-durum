@@ -151,7 +151,8 @@ DEPRESSION_SERVICE_URL = _ipv4_loopback_url(
     os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8057/analyze-depression")
 )
 
-# Türkçe psikolojik sinyal (HF metin sınıflandırma) — boş string ile kapatılabilir
+# Türkçe psik HF: /analyze-fused içinde çağrılmaz. Yalnız POST /analyze-turkish-psych-signals proxy hedefi.
+# Boş string = bu proxy kapalı (iç :8058 doğrudan publish ediliyorsa). Dışarıda yalnız :8085 ise URL dolu olmalı.
 _turkish_psych_raw = os.environ.get("TURKISH_PSYCH_CLASSIFIER_URL")
 if _turkish_psych_raw is None:
     TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url("http://127.0.0.1:8058/analyze")
