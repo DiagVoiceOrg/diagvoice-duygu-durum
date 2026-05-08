@@ -23,6 +23,46 @@
   color: var(--text-muted);
 }
 
+.notice-banner {
+  margin-bottom: 1rem;
+  background: linear-gradient(180deg, #fffbeb 0%, #fff7ed 100%);
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: 0 1px 3px rgba(245, 158, 11, 0.08);
+}
+
+.notice-banner:hover {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.notice-banner.card h2.notice-banner-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #92400e;
+  letter-spacing: -0.02em;
+}
+
+.notice-banner-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-main);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.notice-banner-list li {
+  margin-bottom: 0.4rem;
+}
+
+.notice-banner-list li:last-child {
+  margin-bottom: 0;
+}
+
+.app-rtl .notice-banner-list {
+  padding-left: 0;
+  padding-right: 1.2rem;
+}
+
 .lang-strip {
   margin-bottom: 1rem;
   display: flex;
