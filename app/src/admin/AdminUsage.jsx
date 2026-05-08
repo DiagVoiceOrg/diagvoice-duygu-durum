@@ -319,7 +319,8 @@ export default function AdminUsage() {
               maxWidth: 'min(52rem, 100%)',
               maxHeight: '85vh',
               overflow: 'auto',
-              background: 'var(--bg, #111)',
+              background: 'var(--surface, #111827)',
+              color: 'var(--text, #e5e7eb)',
               borderRadius: 8,
               padding: '1rem',
               boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
@@ -338,6 +339,11 @@ export default function AdminUsage() {
                 fontSize: '0.75rem',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
+                color: 'var(--text, #e5e7eb)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 6,
+                padding: '0.75rem',
               }}
             >
               {JSON.stringify(detail, null, 2)}
