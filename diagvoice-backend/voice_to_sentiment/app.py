@@ -1,5 +1,4 @@
 import contextlib
-import io
 import logging
 import os
 import tempfile
@@ -15,7 +14,6 @@ import torch.nn as nn
 import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydub import AudioSegment
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoModel
 
@@ -148,42 +146,18 @@ except Exception:
 
 
 def decode_audio_to_16k_mono_float32(audio_bytes: bytes, filename: str):
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
+    from audio_io import load_mono_float32_from_buffer
 
-        audio_segment = AudioSegment.from_file(tmp_path)
-        audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-        wav_buffer = io.BytesIO()
-        audio_segment.export(wav_buffer, format="wav")
-        wav_buffer.seek(0)
-
-        y, sr = librosa.load(wav_buffer, sr=TARGET_SR, mono=True)
-        if y is None or len(y) == 0:
-            raise RuntimeError("Empty audio")
-        return y.astype("float32"), sr
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    y, sr = load_mono_float32_from_buffer(audio_bytes, sr=TARGET_SR, mono=True, filename_hint=filename)
+    if y is None or len(y) == 0:
+        raise RuntimeError("Empty audio")
+    return y.astype("float32"), int(sr)
 
 
 def decode_audio_file_to_16k_mono_float32(path: str):
-    try:
-        y, sr = librosa.load(path, sr=TARGET_SR, mono=True)
-        if y is not None and len(y) > 0:
-            return y.astype("float32"), int(sr)
-    except Exception:
-        pass
+    from audio_io import load_mono_float32
 
-    audio_segment = AudioSegment.from_file(path)
-    audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-    wav_buffer = io.BytesIO()
-    audio_segment.export(wav_buffer, format="wav")
-    wav_buffer.seek(0)
-
-    y, sr = librosa.load(wav_buffer, sr=TARGET_SR, mono=True)
+    y, sr = load_mono_float32(path, sr=TARGET_SR, mono=True)
     if y is None or len(y) == 0:
         raise RuntimeError("Empty audio")
     return y.astype("float32"), int(sr)

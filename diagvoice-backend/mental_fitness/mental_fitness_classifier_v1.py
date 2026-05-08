@@ -5,13 +5,16 @@ Tek bir ses dosyasını alır ve depresyon/sağlıklı sınıflandırması yapar
 API yok, sadece düz Python kodu.
 """
 
-import sys
 import json
-import numpy as np
-import librosa
-import joblib
+import sys
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Any, Dict, Optional, Tuple
+
+import joblib
+import librosa
+import numpy as np
+
+from audio_io import load_mono_float32
 
 
 def extract_features(
@@ -31,7 +34,7 @@ def extract_features(
     basic_pipeline_3.py'den alınmıştır.
     """
     try:
-        y, sr = librosa.load(path, sr=sr, mono=True)
+        y, sr = load_mono_float32(path, sr=sr, mono=True)
         if y.size == 0:
             return None
 

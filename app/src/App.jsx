@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import AdminLayout from './admin/AdminLayout';
 import AdminLogin from './admin/AdminLogin';
 import AdminModelHealth from './admin/AdminModelHealth';
+import AdminUsage from './admin/AdminUsage';
 import AdminPages from './admin/AdminPages';
 import AdminProfiles from './admin/AdminProfiles';
 import ProtectedRoute from './admin/ProtectedRoute';
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="pages" element={<AdminPages />} />
         <Route path="profiles" element={<AdminProfiles />} />
         <Route path="models-health" element={<AdminModelHealth />} />
+        <Route path="usage" element={<AdminUsage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

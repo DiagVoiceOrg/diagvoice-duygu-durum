@@ -42,7 +42,7 @@ def predict() -> Any:
     transcript = (request.form.get("transcript") or "").strip()
 
     ext = Path(f.filename or "x.wav").suffix.lower() or ".wav"
-    if ext not in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm"):
+    if ext not in (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".aac"):
         return jsonify({"error": f"desteklenmeyen uzantı: {ext}"}), 400
 
     try:
