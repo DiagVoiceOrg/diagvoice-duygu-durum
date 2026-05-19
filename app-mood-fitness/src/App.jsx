@@ -20,11 +20,8 @@ function ProbBar({ label, value, color }) {
   );
 }
 
-function hasServiceOutcome(stt, sttErr, emotion, emotionErr, mental, mentalErr) {
-  return (
-    !!(stt || emotion || mental) ||
-    !!(sttErr || emotionErr || mentalErr)
-  );
+function hasServiceOutcome(stt, sttErr, emotion, emotionErr) {
+  return !!(stt || emotion) || !!(sttErr || emotionErr);
 }
 
 export default function App() {
@@ -36,17 +33,14 @@ export default function App() {
   const [sttError, setSttError] = useState(null);
   const [emotion, setEmotion] = useState(null);
   const [emotionError, setEmotionError] = useState(null);
-  const [mental, setMental] = useState(null);
-  const [mentalError, setMentalError] = useState(null);
 
   const m = getStrings(speechLang);
-  const isRtl = speechLang === 'arabic';
 
   useEffect(() => {
     document.documentElement.lang = htmlLangAttribute(speechLang);
-    document.documentElement.dir = isRtl ? 'rtl' : 'ltr';
+    document.documentElement.dir = 'ltr';
     document.title = m.pageTitle;
-  }, [speechLang, isRtl, m.pageTitle]);
+  }, [speechLang, m.pageTitle]);
 
   const resetResults = () => {
     setFatalError('');
@@ -54,8 +48,6 @@ export default function App() {
     setSttError(null);
     setEmotion(null);
     setEmotionError(null);
-    setMental(null);
-    setMentalError(null);
   };
 
   const analyzeAudio = useCallback(
@@ -71,8 +63,6 @@ export default function App() {
         setSttError(out.sttError);
         setEmotion(out.emotion);
         setEmotionError(out.emotionError);
-        setMental(out.mental);
-        setMentalError(out.mentalError);
       } catch (err) {
         const msg = err?.message || loc.unknownError;
         console.error(`Analysis failed for ${sourceName}:`, err);
@@ -99,7 +89,7 @@ export default function App() {
   );
 
   const showResults =
-    !isLoading && hasServiceOutcome(stt, sttError, emotion, emotionError, mental, mentalError);
+    !isLoading && hasServiceOutcome(stt, sttError, emotion, emotionError);
 
   const emotionColors = ['#6366f1', '#f59e0b', '#10b981', '#ef4444'];
   const labelsOrder = emotion?.labels
@@ -113,7 +103,7 @@ export default function App() {
       : stt?.language;
 
   return (
-    <div className={`app-container${isRtl ? ' app-rtl' : ''}`}>
+    <div className="app-container">
       <header className="app-header">
         <div className="brand-name">DiagVoice</div>
         <div className="title">{m.headerSubtitle}</div>
@@ -217,8 +207,7 @@ export default function App() {
           </article>
 
           <article className="card result-block">
-            <h2>{m.mentalSectionTitle}</h2>
-            <h3 className="h3">{m.transcriptionTitle}</h3>
+            <h2>{m.transcriptionSectionTitle}</h2>
             {sttError && <p className="err">{sttError}</p>}
             {!sttError && stt && (
               <div className="transcript-box" dir="auto">
@@ -231,30 +220,6 @@ export default function App() {
               </div>
             )}
             {!sttError && !stt && <p className="muted">{m.noComponentResult}</p>}
-
-            <h3 className="h3">{m.mentalFitnessHeading}</h3>
-            <p className="meta-small muted">{m.mentalHint}</p>
-            {mentalError && <p className="err">{mentalError}</p>}
-            {!mentalError && mental && (
-              <div>
-                <p className="lead">
-                  {m.mentalClass}:{' '}
-                  <strong>{m.mentalLabels[mental.pred_label] || mental.pred_label}</strong>
-                  {mental.mental_fitness_score != null && (
-                    <>
-                      {' · '}
-                      {m.score}: <strong>{mental.mental_fitness_score}</strong>
-                    </>
-                  )}
-                </p>
-                {mental.probs && mental.probs.length > 0 && (
-                  <p className="muted small">
-                    {m.probsLabel}: {mental.probs.map((p) => p.toFixed(3)).join(', ')}
-                  </p>
-                )}
-              </div>
-            )}
-            {!mentalError && !mental && <p className="muted">{m.noComponentResult}</p>}
           </article>
         </section>
       )}

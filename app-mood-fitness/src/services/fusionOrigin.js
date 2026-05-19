@@ -1,12 +1,11 @@
 /**
  * Fusion kök host (proxy uçları bu origin altında).
- * Bu uygulama /analyze-fused KULLANMAZ — yalnızca ihtiyaç duyulan proxy path'leri çağrılır.
+ * Bu uygulama /analyze-fused kullanmaz.
  */
 export function getFusionOrigin() {
   const direct = (import.meta.env.VITE_FUSION_ORIGIN || '').trim();
   if (direct) return direct.replace(/\/+$/, '');
 
-  // Ana app ile uyum: VITE_API_URL .../analyze-fused ise kök host'a indir.
   const fromApiUrl = (import.meta.env.VITE_API_URL || '').trim();
   if (fromApiUrl) {
     const stripped = fromApiUrl.replace(/\/?analyze-fused\/?$/i, '').replace(/\/+$/, '');
