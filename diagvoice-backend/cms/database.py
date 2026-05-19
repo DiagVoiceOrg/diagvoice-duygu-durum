@@ -30,3 +30,6 @@ async def ensure_indexes() -> None:
     await db.pages.create_index("slug", unique=True)
     await db.pages.create_index("published")
     await db.ui_profiles.create_index("key", unique=True)
+    await db.fusion_api_logs.create_index([("created_at", -1)])
+    await db.fusion_api_logs.create_index([("path", 1), ("created_at", -1)])
+    await db.fusion_api_logs.create_index([("outcome", 1), ("created_at", -1)])

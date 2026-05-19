@@ -53,6 +53,12 @@ const tr = {
     arabic: 'Arapça',
   },
   sourceNewRecording: 'Yeni kayıt',
+  legalNoticeTitle: 'Bilgilendirme',
+  legalNoticePoints: [
+    'Bu sayfa, DiagVoice’a ait ses analizi modellerinin yer aldığı bir web arayüzüdür.',
+    'Kullanım ve sonuçlar üzerindeki haklar sınırlıdır; buradaki çıktılar tanı veya tedavi yerine kullanılmamalıdır.',
+    'Modeller geliştirme aşamasındadır; gördüğünüz sonuçlar her zaman en güncel veya nihai sürümü temsil etmeyebilir.',
+  ],
 };
 
 const en = {
@@ -102,6 +108,12 @@ const en = {
     arabic: 'Arabic',
   },
   sourceNewRecording: 'New recording',
+  legalNoticeTitle: 'Notice',
+  legalNoticePoints: [
+    'This page is a web interface that hosts DiagVoice audio analysis models.',
+    'Rights regarding use and outcomes are limited; outputs must not replace medical diagnosis or treatment.',
+    'Models are under development; what you see may not always reflect the latest or final release.',
+  ],
 };
 
 const ar = {
@@ -151,6 +163,12 @@ const ar = {
     arabic: 'العربية',
   },
   sourceNewRecording: 'تسجيل جديد',
+  legalNoticeTitle: 'تنويه',
+  legalNoticePoints: [
+    'هذه الصفحة واجهة ويب تعرض نماذج تحليل الصوت الخاصة بـ DiagVoice.',
+    'حقوق الاستخدام والنتائج محدودة؛ لا يجوز استخدام المخرجات بديلاً عن التشخيص أو العلاج الطبي.',
+    'النماذج قيد التطوير؛ قد لا تعكس النتائج دائمًا أحدث إصدار أو النسخة النهائية.',
+  ],
 };
 
 export const translations = {

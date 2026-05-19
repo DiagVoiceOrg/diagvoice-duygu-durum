@@ -119,6 +119,19 @@ export default function App() {
         <div className="title">{m.headerSubtitle}</div>
       </header>
 
+      <section
+        className="notice-banner card"
+        role="region"
+        aria-label={m.legalNoticeTitle}
+      >
+        <h2 className="notice-banner-title">{m.legalNoticeTitle}</h2>
+        <ul className="notice-banner-list">
+          {m.legalNoticePoints.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      </section>
+
       <section className="lang-strip card" aria-label={m.langSectionTitle}>
         <div className="lang-strip-head">
           <span className="lang-strip-title">{m.langSectionTitle}</span>

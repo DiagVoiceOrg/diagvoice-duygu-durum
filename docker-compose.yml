@@ -1,3 +1,5 @@
+# Ortam: yalnızca kök .env. .env değişince restart yetmez — örn. docker compose up -d --force-recreate backend
+# Ortam değişkenleri: yalnızca depo kökündeki .env (diagvoice-backend/.env kullanılmaz).
 # Kod: ./diagvoice-backend -> /app volume ile anında yansır (hot reload yok; kod değişince konteyner restart).
 # HF önbelleği: bind mount /app altında kaybolmasın diye ayrı volume.
 services:

@@ -56,6 +56,16 @@ def _env_upstream_urls() -> dict[str, tuple[str, str]]:
     if inference_raw is not None and str(inference_raw).strip():
         inference = _ipv4_loopback_url(str(inference_raw).strip().rstrip("/"))
 
+    # HF Türkçe psik metin servisi (mental_fitness ses servisinden ayrı). Boş TURKISH_PSYCH_HEALTH_URL = tarama dışı.
+    _tp_h_raw = os.environ.get("TURKISH_PSYCH_HEALTH_URL")
+    if _tp_h_raw is not None and not str(_tp_h_raw).strip():
+        turkish_psych_health = ""
+    elif _tp_h_raw and str(_tp_h_raw).strip():
+        turkish_psych_health = _ipv4_loopback_url(str(_tp_h_raw).strip())
+    else:
+        _tp_port = int(os.environ.get("TURKISH_PSYCH_CLASSIFIER_PORT", "8058"))
+        turkish_psych_health = _ipv4_loopback_url(f"http://127.0.0.1:{_tp_port}/health")
+
     return {
         "text_sentiment": ("Metin duygu analizi", _service_root(tts)),
         "voice_to_text": ("Ses → metin (STT)", _service_root(vtt)),
@@ -64,6 +74,7 @@ def _env_upstream_urls() -> dict[str, tuple[str, str]]:
         "mental_fitness": ("Mental fitness", _service_root(mf)),
         "age_gender": ("Yaş & cinsiyet", _service_root(ag)),
         "depression": ("Depresyon skoru", _service_root(dep)),
+        "turkish_psych": ("Türkçe psik sinyal (HF metin)", turkish_psych_health),
         "benchmark": ("İş sağlığı (benchmark)", f"{inference}/health" if inference else ""),
     }
 
@@ -122,6 +133,17 @@ async def _probe_get(client: httpx.AsyncClient, service_id: str, label: str, url
                     "Model /health yanıtı başarısız (model dosyası veya bağımlılık kontrolü)."
                 )
                 out["status"] = "fail"
+        elif service_id == "turkish_psych":
+            # FastAPI GET /health: { ok, model_dir, weights_path }
+            ok = ok and isinstance(preview, dict) and preview.get("ok") is True
+            if ok:
+                out["status"] = "ok"
+            else:
+                out["detail"] = (
+                    "HF model / ağırlık yüklenemedi (weights_path veya bağımlılık). "
+                    "TURKISH_PSYCH_WEIGHTS_PATH ve servis loglarını kontrol edin."
+                )
+                out["status"] = "fail"
         else:
             if ok:
                 out["status"] = "ok"
@@ -129,10 +151,10 @@ async def _probe_get(client: httpx.AsyncClient, service_id: str, label: str, url
                 out["detail"] = f"HTTP {r.status_code}"
                 out["status"] = "fail" if r.status_code >= 500 else "warn"
 
-        # benchmark disinda body'de bilinen hata
+        # benchmark / turkish_psych disinda body'de bilinen hata
         if preview and isinstance(preview, dict) and preview.get("error"):
             msg = str(preview.get("error"))[:480]
-            if service_id != "benchmark" or preview.get("ok") is False:
+            if service_id not in ("benchmark", "turkish_psych") or preview.get("ok") is False:
                 out["detail"] = msg
                 if preview.get("ok") is False or r.status_code >= 400:
                     out["status"] = "fail"
@@ -168,6 +190,7 @@ async def models_health(_: Annotated[dict, Depends(require_admin)]) -> dict[str,
         "mental_fitness",
         "age_gender",
         "depression",
+        "turkish_psych",
         "benchmark",
     ]
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -195,7 +218,8 @@ async def models_health(_: Annotated[dict, Depends(require_admin)]) -> dict[str,
         "services": list(services),
         "summary": summary,
         "hint": (
-            "Bu kontrol yalnızca servislerin HTTP yanıt verdiğini ve (benchmark için) joblib yükünü doğrular; "
+            "Bu kontrol yalnızca servislerin HTTP yanıt verdiğini, benchmark için joblib yükünü ve "
+            "Türkçe psik HF servisi için /health içindeki model yükünü doğrular; "
             "tam çıkarım doğruluğu için ses ile /analyze-fused denemesi gerekir."
         ),
     }

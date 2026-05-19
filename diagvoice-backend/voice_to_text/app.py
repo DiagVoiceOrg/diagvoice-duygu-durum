@@ -18,7 +18,7 @@ from pydub import AudioSegment
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
-app = fastapi.FastAPI()
+app = fastapi.FastAPI() 
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",

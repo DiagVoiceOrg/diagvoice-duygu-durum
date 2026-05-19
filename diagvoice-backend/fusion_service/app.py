@@ -18,7 +18,7 @@ if str(_BACKEND_ROOT) not in sys.path:
 import fastapi
 import httpx
 import uvicorn
-from fastapi import Body, File, Form, HTTPException, UploadFile
+from fastapi import Body, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -106,10 +106,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def fusion_usage_audit_middleware(request: Request, call_next):
+    """MongoDB fusion_api_logs: yol, metod, HTTP durumu, süre, istemci IP; handler `request.state.audit_details` ile zenginleştirir."""
+    from cms.usage_audit import AUDIT_LOG_ENABLED, _skip_path, client_ip_from_request, schedule_fusion_audit
+
+    path = request.url.path
+    if not _CMS_ENABLED or not AUDIT_LOG_ENABLED or _skip_path(path):
+        return await call_next(request)
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - t0) * 1000.0
+    details = getattr(request.state, "audit_details", None)
+    if details is not None and not isinstance(details, dict):
+        details = {"value": str(details)[:2000]}
+    schedule_fusion_audit(
+        path=path,
+        method=request.method,
+        http_status=response.status_code,
+        duration_ms=duration_ms,
+        client_ip=client_ip_from_request(request.scope.get("headers") or []),
+        details=details,
+    )
+    return response
+
+
 if _CMS_ENABLED:
     from cms.routers import admin_diagnostics as cms_admin_diagnostics
     from cms.routers import admin_pages as cms_admin_pages
     from cms.routers import admin_profiles as cms_admin_profiles
+    from cms.routers import admin_usage as cms_admin_usage
     from cms.routers import auth as cms_auth
     from cms.routers import public as cms_public
 
@@ -118,6 +145,7 @@ if _CMS_ENABLED:
     app.include_router(cms_admin_pages.router)
     app.include_router(cms_admin_profiles.router)
     app.include_router(cms_admin_diagnostics.router)
+    app.include_router(cms_admin_usage.router)
 
 VOICE_TO_TEXT_URL = _ipv4_loopback_url(
     os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
@@ -150,6 +178,16 @@ AGE_GENDER_URL = _ipv4_loopback_url(
 DEPRESSION_SERVICE_URL = _ipv4_loopback_url(
     os.environ.get("DEPRESSION_SERVICE_URL", "http://127.0.0.1:8057/analyze-depression")
 )
+
+# Türkçe psik HF: /analyze-fused içinde çağrılmaz. Yalnız POST /analyze-turkish-psych-signals proxy hedefi.
+# Boş string = bu proxy kapalı (iç :8058 doğrudan publish ediliyorsa). Dışarıda yalnız :8085 ise URL dolu olmalı.
+_turkish_psych_raw = os.environ.get("TURKISH_PSYCH_CLASSIFIER_URL")
+if _turkish_psych_raw is None:
+    TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url("http://127.0.0.1:8058/analyze")
+elif not str(_turkish_psych_raw).strip():
+    TURKISH_PSYCH_CLASSIFIER_URL = ""
+else:
+    TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url(str(_turkish_psych_raw).strip())
 
 # benchmark_v2 (inference_api Flask, iç ağ) — boş string ile kapatılabilir
 _inference_url_raw = os.environ.get("INFERENCE_API_URL")
@@ -464,10 +502,16 @@ async def _fusion_post_json(
     return None, f"request failed (url={url}): {last_conn}"
 
 
+def _set_audit_details(request: Optional[Request], details: Dict[str, Any]) -> None:
+    if request is not None:
+        request.state.audit_details = details
+
+
 async def _proxy_file_upload(
     upstream_url: str,
     file: UploadFile,
     *,
+    request: Optional[Request] = None,
     file_field_name: str = "file",
     extra_form_data: Optional[Dict[str, str]] = None,
     proxy_name: str = "proxy_multipart",
@@ -574,6 +618,15 @@ async def _proxy_file_upload(
                         (time.perf_counter() - t_upstream) * 1000,
                         e,
                     )
+                    _set_audit_details(
+                        request,
+                        {
+                            "proxy": proxy_name,
+                            "filename": fname,
+                            "bytes": nbytes,
+                            "error": "upstream_unreachable",
+                        },
+                    )
                     return JSONResponse(
                         status_code=503,
                         content={
@@ -586,9 +639,17 @@ async def _proxy_file_upload(
                 if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                     continue
                 _log.error("proxy_error name=%s upstream=%s err=%s", proxy_name, upstream_url, e)
+                _set_audit_details(
+                    request,
+                    {"proxy": proxy_name, "filename": fname, "bytes": nbytes, "error": "proxy_exception", "message": str(e)[:800]},
+                )
                 return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
         if r is None:
+            _set_audit_details(
+                request,
+                {"proxy": proxy_name, "filename": fname, "bytes": nbytes, "error": "no_upstream_response"},
+            )
             return JSONResponse(
                 status_code=503,
                 content={"detail": "Upstream not reachable (no response)."},
@@ -605,6 +666,16 @@ async def _proxy_file_upload(
             (time.perf_counter() - t_upstream) * 1000,
             (time.perf_counter() - t_req) * 1000,
         )
+        _set_audit_details(
+            request,
+            {
+                "proxy": proxy_name,
+                "filename": fname,
+                "bytes": nbytes,
+                "upstream_http": r.status_code,
+                "storage": storage,
+            },
+        )
         return JSONResponse(status_code=r.status_code, content=body)
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -615,11 +686,14 @@ async def _proxy_file_upload(
 
 
 async def _proxy_json(
+    request: Request,
     upstream_url: str,
     payload: Dict[str, Any],
     *,
     proxy_name: str = "proxy_json",
 ) -> JSONResponse:
+    from cms.usage_audit import truncate_proxy_json
+
     t0 = time.perf_counter()
     _log.info("proxy_json_begin name=%s upstream=%s", proxy_name, upstream_url)
     r: Optional[httpx.Response] = None
@@ -633,6 +707,7 @@ async def _proxy_json(
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             if attempt + 1 >= FUSION_UPSTREAM_CONNECT_RETRIES:
                 _log.error("proxy_json_fail name=%s upstream=%s err=%s", proxy_name, upstream_url, e)
+                _set_audit_details(request, {"proxy": proxy_name, "error": "upstream_unreachable"})
                 return JSONResponse(
                     status_code=503,
                     content={
@@ -645,9 +720,11 @@ async def _proxy_json(
             if _is_upstream_connection_error(e) and attempt + 1 < FUSION_UPSTREAM_CONNECT_RETRIES:
                 continue
             _log.error("proxy_json_error name=%s err=%s", proxy_name, e)
+            _set_audit_details(request, {"proxy": proxy_name, "error": "proxy_exception", "message": str(e)[:800]})
             return JSONResponse(status_code=502, content={"detail": f"Proxy error: {e}"})
 
     if r is None:
+        _set_audit_details(request, {"proxy": proxy_name, "error": "no_upstream_response"})
         return JSONResponse(status_code=503, content={"detail": "Upstream not reachable (no response)."})
     try:
         body = r.json()
@@ -659,6 +736,7 @@ async def _proxy_json(
         r.status_code,
         (time.perf_counter() - t0) * 1000,
     )
+    request.state.audit_details = truncate_proxy_json(body, proxy_name)
     return JSONResponse(status_code=r.status_code, content=body)
 
 
@@ -678,6 +756,7 @@ async def root():
             "mental_fitness_validate_transcript": MENTAL_FITNESS_VALIDATE_URL,
             "age_gender": AGE_GENDER_URL,
             "depression_service": DEPRESSION_SERVICE_URL,
+            "turkish_psych_classifier": TURKISH_PSYCH_CLASSIFIER_URL or None,
             "benchmark_inference": INFERENCE_API_URL or None,
         },
         "proxy": {
@@ -699,6 +778,11 @@ async def root():
                 if INFERENCE_API_URL
                 else "disabled (INFERENCE_API_URL empty)"
             ),
+            "turkish_psych_signals": (
+                "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi"
+                if TURKISH_PSYCH_CLASSIFIER_URL
+                else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
+            ),
         },
         "fusion": {
             "w_text": FUSION_W_TEXT,
@@ -711,16 +795,19 @@ async def root():
 
 
 @app.post("/analyze-depression")
-async def proxy_analyze_depression(file: UploadFile = File(...)):
+async def proxy_analyze_depression(request: Request, file: UploadFile = File(...)):
     """
     Aracı endpoint: gelen ses dosyasını doğrudan depresyon servisine iletir.
     Yanıt gövdesi ve HTTP durumu depresyon servisiyle aynıdır (JSON).
     """
-    return await _proxy_file_upload(DEPRESSION_SERVICE_URL, file, file_field_name="file", proxy_name="analyze-depression")
+    return await _proxy_file_upload(
+        DEPRESSION_SERVICE_URL, file, request=request, file_field_name="file", proxy_name="analyze-depression"
+    )
 
 
 @app.post("/analyze-voice-to-text")
 async def proxy_analyze_voice_to_text(
+    request: Request,
     file: UploadFile = File(...),
     speech_language: str = Form("tr"),
 ):
@@ -728,6 +815,7 @@ async def proxy_analyze_voice_to_text(
     return await _proxy_file_upload(
         VOICE_TO_TEXT_URL,
         file,
+        request=request,
         file_field_name="file",
         extra_form_data={"language": lg},
         proxy_name="analyze-voice-to-text",
@@ -735,32 +823,39 @@ async def proxy_analyze_voice_to_text(
 
 
 @app.post("/analyze-text-sentiment")
-async def proxy_analyze_text_sentiment(payload: Dict[str, Any] = Body(...)):
+async def proxy_analyze_text_sentiment(request: Request, payload: Dict[str, Any] = Body(...)):
     text = str(payload.get("text", "")).strip()
     if not text:
         raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
-    return await _proxy_json(TEXT_TO_SENTIMENT_URL, {"text": text}, proxy_name="analyze-text-sentiment")
+    return await _proxy_json(request, TEXT_TO_SENTIMENT_URL, {"text": text}, proxy_name="analyze-text-sentiment")
 
 
 @app.post("/analyze-voice-sentiment")
-async def proxy_analyze_voice_sentiment(file: UploadFile = File(...)):
-    return await _proxy_file_upload(VOICE_TO_SENTIMENT_URL, file, file_field_name="file", proxy_name="analyze-voice-sentiment")
+async def proxy_analyze_voice_sentiment(request: Request, file: UploadFile = File(...)):
+    return await _proxy_file_upload(
+        VOICE_TO_SENTIMENT_URL, file, request=request, file_field_name="file", proxy_name="analyze-voice-sentiment"
+    )
 
 
 @app.post("/analyze-disease")
-async def proxy_analyze_disease(file: UploadFile = File(...)):
-    return await _proxy_file_upload(DISEASE_SERVICE_URL, file, file_field_name="file", proxy_name="analyze-disease")
+async def proxy_analyze_disease(request: Request, file: UploadFile = File(...)):
+    return await _proxy_file_upload(
+        DISEASE_SERVICE_URL, file, request=request, file_field_name="file", proxy_name="analyze-disease"
+    )
 
 
 @app.post("/analyze-mental-fitness")
-async def proxy_analyze_mental_fitness(file: UploadFile = File(...)):
-    return await _proxy_file_upload(MENTAL_FITNESS_URL, file, file_field_name="file", proxy_name="analyze-mental-fitness")
+async def proxy_analyze_mental_fitness(request: Request, file: UploadFile = File(...)):
+    return await _proxy_file_upload(
+        MENTAL_FITNESS_URL, file, request=request, file_field_name="file", proxy_name="analyze-mental-fitness"
+    )
 
 
 @app.post("/analyze-mental-fitness/validate-transcript-meaning")
-async def proxy_validate_transcript_meaning(payload: Dict[str, Any] = Body(...)):
+async def proxy_validate_transcript_meaning(request: Request, payload: Dict[str, Any] = Body(...)):
     """Mental fitness servisindeki POST /validate-transcript-meaning ile aynı gövde: {text, language}."""
     return await _proxy_json(
+        request,
         MENTAL_FITNESS_VALIDATE_URL,
         {"text": str(payload.get("text", "")), "language": str(payload.get("language", ""))},
         proxy_name="validate-transcript-meaning",
@@ -768,12 +863,15 @@ async def proxy_validate_transcript_meaning(payload: Dict[str, Any] = Body(...))
 
 
 @app.post("/analyze-age-gender")
-async def proxy_analyze_age_gender(file: UploadFile = File(...)):
-    return await _proxy_file_upload(AGE_GENDER_URL, file, file_field_name="file", proxy_name="analyze-age-gender")
+async def proxy_analyze_age_gender(request: Request, file: UploadFile = File(...)):
+    return await _proxy_file_upload(
+        AGE_GENDER_URL, file, request=request, file_field_name="file", proxy_name="analyze-age-gender"
+    )
 
 
 @app.post("/analyze-text-audio-fusion")
 async def proxy_analyze_text_audio_fusion(
+    request: Request,
     text: str = Form(...),
     audio: UploadFile = File(...),
     fusion_mode: str = Form("dynamic"),
@@ -781,6 +879,7 @@ async def proxy_analyze_text_audio_fusion(
     return await _proxy_file_upload(
         f"{TEXT_TO_SENTIMENT_URL.rsplit('/', 1)[0]}/analyze_fusion",
         audio,
+        request=request,
         file_field_name="audio",
         extra_form_data={"text": text, "fusion_mode": fusion_mode},
         proxy_name="analyze-text-audio-fusion",
@@ -788,21 +887,45 @@ async def proxy_analyze_text_audio_fusion(
 
 
 @app.post("/analyze-benchmark-v2")
-async def proxy_analyze_benchmark_v2(file: UploadFile = File(...), transcript: str = Form("")):
+async def proxy_analyze_benchmark_v2(request: Request, file: UploadFile = File(...), transcript: str = Form("")):
     if not INFERENCE_API_URL:
         raise HTTPException(status_code=503, detail="benchmark_v2 disabled (INFERENCE_API_URL empty)")
     predict_url = f"{INFERENCE_API_URL}/predict"
     return await _proxy_file_upload(
         predict_url,
         file,
+        request=request,
         file_field_name="audio",
         extra_form_data={"transcript": transcript or ""},
         proxy_name="analyze-benchmark-v2",
     )
 
 
+@app.post("/analyze-turkish-psych-signals")
+async def proxy_analyze_turkish_psych_signals(request: Request, payload: Dict[str, Any] = Body(...)):
+    """
+    Türkçe psikolojik sinyal HF modeli (mental_fitness ses/metin servisinden bağımsız).
+    Gövde: {\"text\": \"...\"}
+    """
+    if not TURKISH_PSYCH_CLASSIFIER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Turkish psych classifier disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)",
+        )
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
+    return await _proxy_json(
+        request,
+        TURKISH_PSYCH_CLASSIFIER_URL,
+        {"text": text},
+        proxy_name="analyze-turkish-psych-signals",
+    )
+
+
 @app.post("/analyze-fused")
 async def analyze_fused(
+    request: Request,
     file: UploadFile = File(...),
     speech_language: str = Form("tr"),
 ):
@@ -1051,7 +1174,9 @@ async def analyze_fused(
         len((stt_text or "").strip()),
     )
 
-    return {
+    from cms.usage_audit import redact_fused_details
+
+    out: Dict[str, Any] = {
         "text": stt_text,
         "text_error": stt_err,
         "audio": audio_result,
@@ -1078,6 +1203,13 @@ async def analyze_fused(
         },
         "fused": fused,
     }
+    request.state.audit_details = {
+        "route": "analyze-fused",
+        "upload_name": upload_name,
+        "speech_language": stt_lang,
+        "response": redact_fused_details(out),
+    }
+    return out
 
 
 if __name__ == "__main__":

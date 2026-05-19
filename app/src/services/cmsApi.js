@@ -99,3 +99,31 @@ export async function fetchModelsHealth(token) {
   });
   return data;
 }
+
+/** Fusion API kullanım özeti (tarih: ISO string, opsiyonel). */
+export async function fetchUsageSummary(token, { from, to } = {}) {
+  const { data } = await axios.get(`${base()}/admin/usage/summary`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: {
+      ...(from ? { from } : {}),
+      ...(to ? { to } : {}),
+    },
+  });
+  return data;
+}
+
+/** Sayfalı log listesi: skip, limit, path, min_status, outcome, from, to */
+export async function fetchUsageLogs(token, params = {}) {
+  const { data } = await axios.get(`${base()}/admin/usage/logs`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params,
+  });
+  return data;
+}
+
+export async function fetchUsageLogDetail(token, logId) {
+  const { data } = await axios.get(`${base()}/admin/usage/logs/${encodeURIComponent(logId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data;
+}

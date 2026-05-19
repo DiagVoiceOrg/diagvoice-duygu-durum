@@ -145,24 +145,12 @@ _load_model()
 
 
 def _wav_tensor_from_path(tmp_path: str) -> torch.Tensor:
-    """Önce librosa; olmazsa pydub (m4a/mp3 vb.). Çıktı: [MAX_LEN] float32."""
-    wav: torch.Tensor | None = None
-    try:
-        y, s = librosa.load(tmp_path, sr=SR, mono=True)
-        if y is not None and len(y) > 0:
-            wav = torch.from_numpy(np.asarray(y, dtype=np.float32))
-            wav = torch.nan_to_num(wav)
-    except Exception:
-        wav = None
+    """librosa + pydub yedekli decode (audio_io); çıktı: [MAX_LEN] float32."""
+    from audio_io import load_mono_float32
 
-    if wav is None or wav.numel() == 0:
-        from pydub import AudioSegment
-
-        audio = AudioSegment.from_file(tmp_path)
-        audio = audio.set_frame_rate(SR).set_channels(1)
-        arr = np.array(audio.get_array_of_samples(), dtype=np.float32) / 32768.0
-        wav = torch.tensor(arr, dtype=torch.float32)
-        wav = torch.nan_to_num(wav)
+    y, _s = load_mono_float32(tmp_path, sr=SR, mono=True)
+    wav = torch.from_numpy(np.asarray(y, dtype=np.float32))
+    wav = torch.nan_to_num(wav)
 
     wav = wav[:MAX_LEN] if wav.numel() > MAX_LEN else nn.functional.pad(wav, (0, MAX_LEN - wav.numel()))
     return wav

@@ -1,5 +1,4 @@
 import contextlib
-import io
 import logging
 import os
 import tempfile
@@ -16,7 +15,6 @@ import torch.nn as nn
 import uvicorn
 from fastapi import File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydub import AudioSegment
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoFeatureExtractor, AutoModel
 
@@ -98,26 +96,11 @@ class Wav2VecBinaryClassifier(nn.Module):
 
 
 def _decode_to_float32_16k(path: str) -> np.ndarray:
-    """
-    Önce librosa (daha az kopya); olmazsa pydub+ffmpeg yolu.
-    """
-    y: np.ndarray | None = None
-    sr = TARGET_SR
-    try:
-        y_load, sr_load = librosa.load(path, sr=TARGET_SR, mono=True)
-        y = np.asarray(y_load, dtype=np.float32)
-        sr = int(sr_load)
-    except Exception:
-        y = None
+    """librosa + AAC vb. için pydub yedekli decode (audio_io)."""
+    from audio_io import load_mono_float32
 
-    if y is None or y.size == 0:
-        audio_segment = AudioSegment.from_file(path)
-        audio_segment = audio_segment.set_frame_rate(TARGET_SR).set_channels(1).set_sample_width(2)
-        wav_buffer = io.BytesIO()
-        audio_segment.export(wav_buffer, format="wav")
-        wav_buffer.seek(0)
-        y, sr = librosa.load(wav_buffer, sr=None, mono=True)
-        y = np.asarray(y, dtype=np.float32)
+    y, sr = load_mono_float32(path, sr=TARGET_SR, mono=True)
+    y = np.asarray(y, dtype=np.float32)
 
     y = np.nan_to_num(y)
     if sr != TARGET_SR:
