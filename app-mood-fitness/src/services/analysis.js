@@ -1,17 +1,39 @@
-const TRANSCRIBE_URL =
-  import.meta.env.VITE_TRANSCRIBE_URL || 'http://localhost:8051/transcribe';
-const VOICE_EMOTION_URL =
-  import.meta.env.VITE_VOICE_EMOTION_URL || 'http://localhost:8052/analyze-audio';
-const MENTAL_FITNESS_URL =
-  import.meta.env.VITE_MENTAL_FITNESS_URL || 'http://localhost:8055/analyze-mental';
-const VALIDATE_TRANSCRIPT_URL =
-  import.meta.env.VITE_VALIDATE_TRANSCRIPT_URL ||
-  `${String(MENTAL_FITNESS_URL).replace(/\/analyze-mental\/?$/i, '') || 'http://localhost:8055'}/validate-transcript-meaning`;
+import { getFusionOrigin } from './fusionOrigin';
+
+/** Fusion proxy kökü; /analyze-fused burada yok — sadece mood-fitness için gerekli uçlar. */
+const FUSION = () => getFusionOrigin();
+const TRANSCRIBE_URL = () => `${FUSION()}/analyze-voice-to-text`;
+const VOICE_EMOTION_URL = () => `${FUSION()}/analyze-voice-sentiment`;
+const MENTAL_FITNESS_URL = () => `${FUSION()}/analyze-mental-fitness`;
+const VALIDATE_TRANSCRIPT_URL = () =>
+  `${FUSION()}/analyze-mental-fitness/validate-transcript-meaning`;
+
 const TRANSCRIPT_VALIDATE_MS = Number(import.meta.env.VITE_TRANSCRIPT_VALIDATE_MS || 90000);
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 
 const REQUEST_MS = Number.isFinite(TIMEOUT_MS) ? TIMEOUT_MS : 600000;
 const VALIDATION_MS = Number.isFinite(TRANSCRIPT_VALIDATE_MS) ? TRANSCRIPT_VALIDATE_MS : 90000;
+
+/** UI (turkish|english|arabic) → fusion STT Form `speech_language` (tr|en|ar) */
+export function normalizeSpeechLanguageForStt(raw) {
+  const s = String(raw ?? 'turkish').trim().toLowerCase();
+  const map = { turkish: 'tr', english: 'en', arabic: 'ar', tr: 'tr', en: 'en', ar: 'ar' };
+  return map[s] || 'tr';
+}
+
+/** UI / validate JSON `language` — mental_fitness bekler: turkish | english | arabic */
+export function normalizeLanguageForValidate(raw) {
+  const s = String(raw ?? 'turkish').trim().toLowerCase();
+  const map = {
+    turkish: 'turkish',
+    english: 'english',
+    arabic: 'arabic',
+    tr: 'turkish',
+    en: 'english',
+    ar: 'arabic',
+  };
+  return map[s] || 'turkish';
+}
 
 function formatFetchError(err) {
   if (!err) return 'Unknown error';
@@ -28,9 +50,6 @@ const extFromMime = (mime) => {
   return 'webm';
 };
 
-/**
- * POST multipart/form-data; JSON body. Tarayıcı boundary’yi kendisi ekler (Content-Type elle verilmez).
- */
 async function postJson(url, jsonBody, timeoutMs = VALIDATION_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -98,9 +117,6 @@ async function postFormJson(url, formData) {
   }
 }
 
-/**
- * Whisper / backend expects: turkish | english | arabic (or tr|en|ar via mapping on server)
- */
 export async function transcribeAudio(audioBlob, languageCode) {
   const formData = new FormData();
   const name =
@@ -108,9 +124,9 @@ export async function transcribeAudio(audioBlob, languageCode) {
       ? audioBlob.name
       : `recording.${extFromMime(audioBlob?.type)}`;
   formData.append('file', audioBlob, name);
-  formData.append('language', languageCode);
+  formData.append('speech_language', normalizeSpeechLanguageForStt(languageCode));
 
-  return postFormJson(TRANSCRIBE_URL, formData);
+  return postFormJson(TRANSCRIBE_URL(), formData);
 }
 
 export async function analyzeVoiceEmotion(audioBlob) {
@@ -121,7 +137,7 @@ export async function analyzeVoiceEmotion(audioBlob) {
       : `recording.${extFromMime(audioBlob?.type)}`;
   formData.append('file', audioBlob, name);
 
-  return postFormJson(VOICE_EMOTION_URL, formData);
+  return postFormJson(VOICE_EMOTION_URL(), formData);
 }
 
 export async function analyzeMentalFitness(audioBlob) {
@@ -132,16 +148,14 @@ export async function analyzeMentalFitness(audioBlob) {
       : `recording.${extFromMime(audioBlob?.type)}`;
   formData.append('file', audioBlob, name);
 
-  return postFormJson(MENTAL_FITNESS_URL, formData);
+  return postFormJson(MENTAL_FITNESS_URL(), formData);
 }
 
-/**
- * Transkript seçilen dilde anlamlı mı (DeepSeek, mental_fitness backend).
- */
+/** Transkript seçilen dilde anlamlı mı (fusion → mental_fitness validate). */
 export async function validateTranscriptForMental(text, languageCode) {
-  return postJson(VALIDATE_TRANSCRIPT_URL, {
+  return postJson(VALIDATE_TRANSCRIPT_URL(), {
     text: text ?? '',
-    language: languageCode,
+    language: normalizeLanguageForValidate(languageCode),
   });
 }
 
