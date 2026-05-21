@@ -759,6 +759,9 @@ async def root():
             "turkish_psych_classifier": TURKISH_PSYCH_CLASSIFIER_URL or None,
             "benchmark_inference": INFERENCE_API_URL or None,
         },
+        "togg_analyze": (
+            "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+        ),
         "proxy": {
             "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
             "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
@@ -921,6 +924,102 @@ async def proxy_analyze_turkish_psych_signals(request: Request, payload: Dict[st
         {"text": text},
         proxy_name="analyze-turkish-psych-signals",
     )
+
+
+@app.post("/togg-analyze")
+async def togg_analyze(request: Request, file: UploadFile = File(...)):
+    """
+    TOGG: tek ses dosyası → emosyon (voice_to_sentiment) ve WURSS (disease_service), paralel.
+    Yanıt alanları analyze-fused ile uyumlu: audio / disease ve *_error.
+    """
+    tmp_path: Optional[str] = None
+    try:
+        suffix = ""
+        if file.filename:
+            safe = file.filename.replace("/", "_").replace("\\", "_")
+            suffix = f"_{safe}"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+
+        assert tmp_path is not None
+        disk = tmp_path
+
+        audio_result: Optional[Dict[str, Any]] = None
+        audio_err: Optional[str] = None
+        disease_result: Optional[Dict[str, Any]] = None
+        disease_err: Optional[str] = None
+
+        upload_name = (file.filename or "audio.wav").replace("/", "_").replace("\\", "_")
+        ct = file.content_type or "application/octet-stream"
+        _log.info(
+            "togg_analyze begin upload_name=%s bytes=%d",
+            upload_name,
+            os.path.getsize(disk),
+        )
+
+        async def _run_voice_sentiment(c: httpx.AsyncClient) -> None:
+            nonlocal audio_result, audio_err
+            audio_result, audio_err = await _fusion_post_multipart_file(
+                c,
+                VOICE_TO_SENTIMENT_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+                step="togg_voice_sentiment",
+            )
+
+        async def _run_disease(c: httpx.AsyncClient) -> None:
+            nonlocal disease_result, disease_err
+            disease_result, disease_err = await _fusion_post_multipart_file(
+                c,
+                DISEASE_SERVICE_URL,
+                disk,
+                file_field="file",
+                upload_name=upload_name,
+                content_type=ct,
+                step="togg_disease",
+            )
+
+        async def _timed(name: str, coro):
+            t0 = time.perf_counter()
+            await coro
+            _log.info("togg_analyze parallel_branch_done branch=%s ms=%.0f", name, (time.perf_counter() - t0) * 1000)
+
+        client = _upstream_client()
+        t_par = time.perf_counter()
+        await asyncio.gather(
+            _timed("voice_sentiment", _run_voice_sentiment(client)),
+            _timed("disease", _run_disease(client)),
+        )
+        _log.info("togg_analyze parallel_gather_done total_ms=%.0f", (time.perf_counter() - t_par) * 1000)
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+    from cms.usage_audit import redact_fused_details
+
+    out: Dict[str, Any] = {
+        "audio": audio_result,
+        "audio_error": audio_err,
+        "disease": disease_result,
+        "disease_error": disease_err,
+    }
+    request.state.audit_details = {
+        "route": "togg-analyze",
+        "upload_name": upload_name,
+        "response": redact_fused_details(out),
+    }
+    return out
 
 
 @app.post("/analyze-fused")
