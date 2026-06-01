@@ -77,6 +77,44 @@ def redact_fused_details(body: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def redact_wellness_details(details: dict[str, Any]) -> dict[str, Any]:
+    """
+    Wellness Companion audit — transcript / asistan metni / session varsayılan olarak kısaltılır.
+    AUDIT_LOG_INCLUDE_TRANSCRIPT=1 ile transcript tam metin yazılabilir.
+    """
+    if not isinstance(details, dict):
+        return {"route": "wellness-companion-chat", "_invalid_details": True}
+
+    out: dict[str, Any] = {}
+    for k, v in details.items():
+        if k in ("transcript", "assistant_message", "message") and isinstance(v, str):
+            t = v.strip()
+            if k == "transcript" and not AUDIT_INCLUDE_TRANSCRIPT:
+                out["transcript_preview"] = (t[:200] + "…") if len(t) > 200 else t
+                out["transcript_len"] = len(t)
+                continue
+            if k in ("assistant_message", "message"):
+                out["response_preview"] = (t[:200] + "…") if len(t) > 200 else t
+                out["response_len"] = len(t)
+                continue
+        if k == "session_id" and isinstance(v, str) and v.strip():
+            sid = v.strip()
+            out["session_id_suffix"] = sid[-12:] if len(sid) > 12 else sid
+            continue
+        if k == "messages" and isinstance(v, list):
+            out["messages_count"] = len(v)
+            continue
+        out[k] = v
+
+    if _json_size(out) > AUDIT_MAX_JSON:
+        return {
+            "route": out.get("route", "wellness-companion-chat"),
+            "_truncated": True,
+            "top_keys": list(details.keys())[:30],
+        }
+    return out
+
+
 def truncate_proxy_json(body: Any, proxy_name: str) -> Any:
     if not isinstance(body, dict):
         return {"proxy": proxy_name, "raw_type": type(body).__name__}

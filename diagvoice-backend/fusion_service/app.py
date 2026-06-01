@@ -118,6 +118,7 @@ _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
     "https://diagvoice.huseyinalav.me,https://diagvoice.com,https://www.diagvoice.com,"
     "http://localhost:5173,http://127.0.0.1:5173,"
+    "https://landing.diagvoice.com,"
     "https://duygudurum.diagvoice.com,https://emosyon.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
 )
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
@@ -825,7 +826,8 @@ async def root():
                 else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
             ),
             "wellness_companion_chat": (
-                "POST /wellness/companion/chat (json: {messages}) -> OpenAI orchestration + optional psych tool"
+                "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); "
+                "OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
             ),
         },
         "fusion": {

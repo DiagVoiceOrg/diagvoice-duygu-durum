@@ -77,13 +77,16 @@ Bu markdown dosyası iş kuralları ve örnek yanıtlar için tam referanstır; 
 | Özellik | Değer |
 |---------|--------|
 | Path | `POST /wellness/companion/chat` |
-| İstek | `application/json` — `{ "messages": [{ "role": "user"\|"assistant", "content": "..." }] }` |
-| Başarı | `200` — `{ "message": "..." }` (yalnızca doğal dil) |
-| Hata | `400` / `429` / `502` / `503` — `{ "error": "..." }` |
+| Mod A (metin) | `application/json` — `{ "messages", "locale?", "session_id?" }` |
+| Mod B (ses) | `multipart/form-data` — `file` + `messages` (JSON string) + `locale?` |
+| Başarı (metin) | `200` — `{ "message": "..." }` |
+| Başarı (ses) | `200` — `{ "message": "...", "transcript": "..." }` |
+| Hata | `400` / `413` / `429` / `502` / `503` — `{ "error": "..." }` |
 | LLM | Sunucuda `OPENAI_API_KEY` (asla frontend’e verilmez) |
-| Tool | Gerektiğinde iç `POST /analyze-turkish-psych-signals` |
+| İç çağrılar (ses) | STT (`VOICE_TO_TEXT_URL`), `POST /analyze-mental-fitness`, `validate-transcript-meaning` |
+| Tool (metin) | Gerektiğinde iç `POST /analyze-turkish-psych-signals` |
 
-Ortam: `.env.example` içindeki `WELLNESS_*`, `OPENAI_*`, `DIAGVOICE_ANALYZE_URL` satırlarına bakın.
+Ham `mental_fitness` / skor JSON’u yanıtta dönmez. Ortam: `.env.example` içindeki `WELLNESS_*`, `OPENAI_*`.
 
 ---
 

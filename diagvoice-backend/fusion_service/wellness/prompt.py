@@ -105,3 +105,14 @@ Yanıt formatı:
 - İnsan gibi konuş
 - Teknik detay gösterme
 """
+
+WELLNESS_VOICE_CONTEXT_TEMPLATE = """Kullanıcı bu turda ses kaydı gönderdi. Transcript ve mental fitness analizi arka planda yapıldı.
+Sonuçları yalnızca konuşmayı yönlendirmek için kullan; teknik detay, skor veya ham model çıktısı söyleme.
+API çıktıları kesin gerçek değil, olası sinyallerdir.
+
+Transcript (kullanıcının söylediği):
+{transcript}
+
+İç analiz özeti (kullanıcıya yansıtma):
+{mental_fitness_summary}
+"""

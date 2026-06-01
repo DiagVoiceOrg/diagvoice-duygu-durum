@@ -105,6 +105,10 @@ class WellnessChatRequest(BaseModel):
 
 class WellnessChatResponse(BaseModel):
     message: str = Field(..., min_length=1, description="Kullanıcıya gösterilen asistan metni")
+    transcript: str | None = Field(
+        None,
+        description="Ses modunda STT metni (kullanıcı balonu); metin modunda yok.",
+    )
 
 
 class WellnessChatErrorResponse(BaseModel):
