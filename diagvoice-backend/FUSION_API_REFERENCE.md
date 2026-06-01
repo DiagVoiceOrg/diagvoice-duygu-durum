@@ -53,6 +53,38 @@ Yaygın hata sınıfları:
 - `500`: Upstream model servisinde iç hata
 - `503`: İlgili fonksiyonun devre dışı olması (örn. benchmark servis URL’i tanımlı değilse)
 
+### 2.4 OpenAPI (otomatik — FastAPI)
+
+Fusion servisi **FastAPI** ile çalışır; OpenAPI 3 şeması ve etkileşimli dokümantasyon ek paket gerektirmeden üretilir:
+
+| Kaynak | Yol | Açıklama |
+|--------|-----|----------|
+| Swagger UI | `GET /docs` | Tarayıcıda deneme (Try it out) |
+| ReDoc | `GET /redoc` | Okunabilir referans |
+| OpenAPI JSON | `GET /openapi.json` | Postman/Insomnia import, kod üretimi |
+
+Yerel geliştirme (Docker compose, port 8085):
+
+- http://localhost:8085/docs
+- http://localhost:8085/openapi.json
+
+`GET /` yanıtındaki `openapi` nesnesi bu yolları listeler (`openapi_json` = `/openapi.json`). Proxy endpoint yanıt şemaları upstream modele göre değişir; birleşik analiz (`/analyze-fused`, `/togg-analyze`) için Fusion’un kendi Pydantic şemaları şemada tanımlıdır. CMS route’ları (`/auth`, `/public`, `/admin/*`) admin/public tag grupları altında görünür.
+
+Bu markdown dosyası iş kuralları ve örnek yanıtlar için tam referanstır; şema ayrıntısı için `/docs` veya `/openapi.json` kullanın.
+
+### 2.5 Wellness Companion (landing sohbet)
+
+| Özellik | Değer |
+|---------|--------|
+| Path | `POST /wellness/companion/chat` |
+| İstek | `application/json` — `{ "messages": [{ "role": "user"\|"assistant", "content": "..." }] }` |
+| Başarı | `200` — `{ "message": "..." }` (yalnızca doğal dil) |
+| Hata | `400` / `429` / `502` / `503` — `{ "error": "..." }` |
+| LLM | Sunucuda `OPENAI_API_KEY` (asla frontend’e verilmez) |
+| Tool | Gerektiğinde iç `POST /analyze-turkish-psych-signals` |
+
+Ortam: `.env.example` içindeki `WELLNESS_*`, `OPENAI_*`, `DIAGVOICE_ANALYZE_URL` satırlarına bakın.
+
 ---
 
 ## 3. Endpoint Referansı

@@ -18,9 +18,20 @@ if str(_BACKEND_ROOT) not in sys.path:
 import fastapi
 import httpx
 import uvicorn
-from fastapi import Body, File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from fusion_service.openapi_tags import OPENAPI_TAGS, PROXY_JSON_RESPONSES
+from fusion_service.schemas import (
+    AnalyzeFusedResponse,
+    ServiceInfoResponse,
+    TextSentimentRequest,
+    ToggAnalyzeResponse,
+    TranscriptMeaningRequest,
+    TurkishPsychSignalsRequest,
+)
 
 
 def _ipv4_loopback_url(url: str) -> str:
@@ -90,13 +101,35 @@ async def _app_lifespan(_app: fastapi.FastAPI):
             _upstream_httpx = None
 
 
-app = fastapi.FastAPI(lifespan=_app_lifespan)
+app = fastapi.FastAPI(
+    title="DiagVoice Fusion API",
+    description=(
+        "Ses tabanlı çoklu model analizi için tek giriş noktası: STT, duygu, hastalık, mental fitness, "
+        "depresyon, yaş-cinsiyet ve isteğe bağlı benchmark. İç servislere proxy ve CMS (MongoDB) API'si.\n\n"
+        "**OpenAPI:** Bu sayfa (`/docs`), ReDoc (`/redoc`) ve ham şema (`/openapi.json`) FastAPI tarafından "
+        "otomatik üretilir. Ayrıntılı iş kuralları için depodaki `FUSION_API_REFERENCE.md` dosyasına bakın."
+    ),
+    version="1.0.0",
+    lifespan=_app_lifespan,
+    openapi_tags=OPENAPI_TAGS,
+)
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
-    "https://diagvoice.huseyinalav.me,http://localhost:5173,http://127.0.0.1:5173,https://duygudurum.diagvoice.com,https://emosyon.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
+    "https://diagvoice.huseyinalav.me,https://diagvoice.com,https://www.diagvoice.com,"
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "https://duygudurum.diagvoice.com,https://emosyon.diagvoice.com,https://algoritmalar.diagvoice.com,https://yolarkadasim.diagvoice.com",
 )
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+
+@app.exception_handler(RequestValidationError)
+async def _wellness_validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/wellness/"):
+        errs = exc.errors()
+        msg = errs[0].get("msg", "Geçersiz istek.") if errs else "Geçersiz istek."
+        return JSONResponse(status_code=400, content={"error": str(msg)})
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -131,6 +164,10 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
     )
     return response
 
+
+from fusion_service.wellness.router import router as wellness_router
+
+app.include_router(wellness_router)
 
 if _CMS_ENABLED:
     from cms.routers import admin_diagnostics as cms_admin_diagnostics
@@ -740,8 +777,9 @@ async def _proxy_json(
     return JSONResponse(status_code=r.status_code, content=body)
 
 
-@app.get("/")
+@app.get("/", response_model=ServiceInfoResponse, tags=["meta"])
 async def root():
+    """Servis özeti, iç bağımlılık URL'leri ve OpenAPI dokümantasyon bağlantıları."""
     return {
         "message": (
             "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion "
@@ -786,6 +824,9 @@ async def root():
                 if TURKISH_PSYCH_CLASSIFIER_URL
                 else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
             ),
+            "wellness_companion_chat": (
+                "POST /wellness/companion/chat (json: {messages}) -> OpenAI orchestration + optional psych tool"
+            ),
         },
         "fusion": {
             "w_text": FUSION_W_TEXT,
@@ -794,11 +835,21 @@ async def root():
             "w_text_max": W_TEXT_MAX,
             "audio_valence_weights": AUDIO_VALENCE_WEIGHTS,
         },
+        "openapi": {
+            "swagger_ui": "/docs",
+            "redoc": "/redoc",
+            "openapi_json": "/openapi.json",
+        },
     }
 
 
-@app.post("/analyze-depression")
-async def proxy_analyze_depression(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/analyze-depression",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Depresyon analizi (proxy)",
+)
+async def proxy_analyze_depression(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     """
     Aracı endpoint: gelen ses dosyasını doğrudan depresyon servisine iletir.
     Yanıt gövdesi ve HTTP durumu depresyon servisiyle aynıdır (JSON).
@@ -808,11 +859,16 @@ async def proxy_analyze_depression(request: Request, file: UploadFile = File(...
     )
 
 
-@app.post("/analyze-voice-to-text")
+@app.post(
+    "/analyze-voice-to-text",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Konuşmayı metne çevir (proxy)",
+)
 async def proxy_analyze_voice_to_text(
     request: Request,
-    file: UploadFile = File(...),
-    speech_language: str = Form("tr"),
+    file: UploadFile = File(..., description="Ses dosyası"),
+    speech_language: str = Form("tr", description="Whisper dili: tr | en | ar"),
 ):
     lg = _normalize_speech_language_for_stt(speech_language)
     return await _proxy_file_upload(
@@ -825,59 +881,91 @@ async def proxy_analyze_voice_to_text(
     )
 
 
-@app.post("/analyze-text-sentiment")
-async def proxy_analyze_text_sentiment(request: Request, payload: Dict[str, Any] = Body(...)):
-    text = str(payload.get("text", "")).strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
-    return await _proxy_json(request, TEXT_TO_SENTIMENT_URL, {"text": text}, proxy_name="analyze-text-sentiment")
+@app.post(
+    "/analyze-text-sentiment",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Metin duygu analizi (proxy)",
+)
+async def proxy_analyze_text_sentiment(request: Request, body: TextSentimentRequest):
+    return await _proxy_json(request, TEXT_TO_SENTIMENT_URL, {"text": body.text.strip()}, proxy_name="analyze-text-sentiment")
 
 
-@app.post("/analyze-voice-sentiment")
-async def proxy_analyze_voice_sentiment(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/analyze-voice-sentiment",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Ses emosyonu (proxy)",
+)
+async def proxy_analyze_voice_sentiment(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     return await _proxy_file_upload(
         VOICE_TO_SENTIMENT_URL, file, request=request, file_field_name="file", proxy_name="analyze-voice-sentiment"
     )
 
 
-@app.post("/analyze-disease")
-async def proxy_analyze_disease(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/analyze-disease",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="WURSS / hastalık (proxy)",
+)
+async def proxy_analyze_disease(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     return await _proxy_file_upload(
         DISEASE_SERVICE_URL, file, request=request, file_field_name="file", proxy_name="analyze-disease"
     )
 
 
-@app.post("/analyze-mental-fitness")
-async def proxy_analyze_mental_fitness(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/analyze-mental-fitness",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Mental fitness — ses (proxy)",
+)
+async def proxy_analyze_mental_fitness(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     return await _proxy_file_upload(
         MENTAL_FITNESS_URL, file, request=request, file_field_name="file", proxy_name="analyze-mental-fitness"
     )
 
 
-@app.post("/analyze-mental-fitness/validate-transcript-meaning")
-async def proxy_validate_transcript_meaning(request: Request, payload: Dict[str, Any] = Body(...)):
-    """Mental fitness servisindeki POST /validate-transcript-meaning ile aynı gövde: {text, language}."""
+@app.post(
+    "/analyze-mental-fitness/validate-transcript-meaning",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Transcript anlamlılık doğrulama (proxy)",
+)
+async def proxy_validate_transcript_meaning(request: Request, body: TranscriptMeaningRequest):
+    """Mental fitness servisindeki POST /validate-transcript-meaning ile aynı gövde."""
     return await _proxy_json(
         request,
         MENTAL_FITNESS_VALIDATE_URL,
-        {"text": str(payload.get("text", "")), "language": str(payload.get("language", ""))},
+        {"text": body.text, "language": body.language},
         proxy_name="validate-transcript-meaning",
     )
 
 
-@app.post("/analyze-age-gender")
-async def proxy_analyze_age_gender(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/analyze-age-gender",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Yaş ve cinsiyet (proxy)",
+)
+async def proxy_analyze_age_gender(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     return await _proxy_file_upload(
         AGE_GENDER_URL, file, request=request, file_field_name="file", proxy_name="analyze-age-gender"
     )
 
 
-@app.post("/analyze-text-audio-fusion")
+@app.post(
+    "/analyze-text-audio-fusion",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Metin + ses valence birleşimi (proxy)",
+)
 async def proxy_analyze_text_audio_fusion(
     request: Request,
-    text: str = Form(...),
-    audio: UploadFile = File(...),
-    fusion_mode: str = Form("dynamic"),
+    text: str = Form(..., description="Metin (STT veya kullanıcı girdisi)"),
+    audio: UploadFile = File(..., description="Ses dosyası — alan adı `audio`"),
+    fusion_mode: str = Form("dynamic", description="text_to_sentiment /analyze_fusion fusion_mode"),
 ):
     return await _proxy_file_upload(
         f"{TEXT_TO_SENTIMENT_URL.rsplit('/', 1)[0]}/analyze_fusion",
@@ -889,8 +977,17 @@ async def proxy_analyze_text_audio_fusion(
     )
 
 
-@app.post("/analyze-benchmark-v2")
-async def proxy_analyze_benchmark_v2(request: Request, file: UploadFile = File(...), transcript: str = Form("")):
+@app.post(
+    "/analyze-benchmark-v2",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="İş sağlığı benchmark v2 (proxy)",
+)
+async def proxy_analyze_benchmark_v2(
+    request: Request,
+    file: UploadFile = File(..., description="Ses dosyası — alan adı `audio` upstream'de"),
+    transcript: str = Form("", description="İsteğe bağlı STT metni"),
+):
     if not INFERENCE_API_URL:
         raise HTTPException(status_code=503, detail="benchmark_v2 disabled (INFERENCE_API_URL empty)")
     predict_url = f"{INFERENCE_API_URL}/predict"
@@ -904,30 +1001,37 @@ async def proxy_analyze_benchmark_v2(request: Request, file: UploadFile = File(.
     )
 
 
-@app.post("/analyze-turkish-psych-signals")
-async def proxy_analyze_turkish_psych_signals(request: Request, payload: Dict[str, Any] = Body(...)):
+@app.post(
+    "/analyze-turkish-psych-signals",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Türkçe psikolojik sinyaller — metin HF (proxy)",
+)
+async def proxy_analyze_turkish_psych_signals(request: Request, body: TurkishPsychSignalsRequest):
     """
-    Türkçe psikolojik sinyal HF modeli (mental_fitness ses/metin servisinden bağımsız).
-    Gövde: {\"text\": \"...\"}
+    Türkçe psikolojik sinyal HF modeli (mental_fitness ses servisinden bağımsız).
+    `/analyze-fused` zincirine dahil değildir.
     """
     if not TURKISH_PSYCH_CLASSIFIER_URL:
         raise HTTPException(
             status_code=503,
             detail="Turkish psych classifier disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)",
         )
-    text = str(payload.get("text", "")).strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Body alanı 'text' zorunludur.")
     return await _proxy_json(
         request,
         TURKISH_PSYCH_CLASSIFIER_URL,
-        {"text": text},
+        {"text": body.text.strip()},
         proxy_name="analyze-turkish-psych-signals",
     )
 
 
-@app.post("/togg-analyze")
-async def togg_analyze(request: Request, file: UploadFile = File(...)):
+@app.post(
+    "/togg-analyze",
+    response_model=ToggAnalyzeResponse,
+    tags=["analysis"],
+    summary="TOGG: ses emosyonu + WURSS (paralel)",
+)
+async def togg_analyze(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     """
     TOGG: tek ses dosyası → emosyon (voice_to_sentiment) ve WURSS (disease_service), paralel.
     Yanıt alanları analyze-fused ile uyumlu: audio / disease ve *_error.
@@ -1022,12 +1126,21 @@ async def togg_analyze(request: Request, file: UploadFile = File(...)):
     return out
 
 
-@app.post("/analyze-fused")
+@app.post(
+    "/analyze-fused",
+    response_model=AnalyzeFusedResponse,
+    tags=["analysis"],
+    summary="Birleşik ses analizi (tüm modeller + valence fusion)",
+)
 async def analyze_fused(
     request: Request,
-    file: UploadFile = File(...),
-    speech_language: str = Form("tr"),
+    file: UploadFile = File(..., description="Ses dosyası"),
+    speech_language: str = Form("tr", description="STT dili: tr | en | ar"),
 ):
+    """
+    Tek ses dosyasında STT, metin/ses duygusu, hastalık, mental fitness, yaş-cinsiyet, depresyon
+    ve isteğe bağlı benchmark_v2 çalıştırır; metin+ses valence birleşimi `fused` alanında döner.
+    """
     tmp_path: Optional[str] = None
     try:
         # Stream upload to disk to avoid holding large files in memory.
