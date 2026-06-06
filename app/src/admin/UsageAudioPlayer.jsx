@@ -56,24 +56,16 @@ export default function UsageAudioPlayer({ token, logId, recording }) {
   const meta = [formatBytes(recording.bytes), recording.content_type].filter(Boolean).join(' · ');
 
   return (
-    <div
-      style={{
-        marginTop: '0.75rem',
-        padding: '0.75rem',
-        borderRadius: 6,
-        border: '1px solid rgba(255,255,255,0.12)',
-        background: 'rgba(255,255,255,0.04)',
-      }}
-    >
-      <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.25rem' }}>Ses kaydı</div>
-      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+    <div className="usage-audio-panel">
+      <div className="usage-audio-panel-title">Ses kaydı</div>
+      <div className="usage-audio-panel-meta">
         {label}
         {meta ? ` (${meta})` : ''}
       </div>
-      {loading ? <div style={{ fontSize: '0.85rem' }}>Ses yükleniyor…</div> : null}
+      {loading ? <div className="usage-audio-loading">Ses yükleniyor…</div> : null}
       {loadErr ? <div className="error">{loadErr}</div> : null}
       {src ? (
-        <audio controls preload="metadata" src={src} style={{ width: '100%' }}>
+        <audio controls preload="metadata" src={src} className="usage-audio-element">
           Tarayıcınız ses oynatmayı desteklemiyor.
         </audio>
       ) : null}

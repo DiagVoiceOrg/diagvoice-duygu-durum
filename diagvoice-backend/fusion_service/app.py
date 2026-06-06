@@ -822,17 +822,22 @@ async def _proxy_file_upload(
             (time.perf_counter() - t_upstream) * 1000,
             (time.perf_counter() - t_req) * 1000,
         )
-        _set_audit_details(
-            request,
-            {
-                "proxy": proxy_name,
-                "filename": fname,
-                "bytes": nbytes,
-                "upstream_http": r.status_code,
-                "storage": storage,
-                **_proxy_upstream_error_detail(body, r.status_code),
-            },
-        )
+        from cms.usage_audit import truncate_proxy_json
+
+        audit_payload: Dict[str, Any] = {
+            "proxy": proxy_name,
+            "filename": fname,
+            "bytes": nbytes,
+            "upstream_http": r.status_code,
+            "storage": storage,
+        }
+        if r.status_code >= 400:
+            audit_payload.update(_proxy_upstream_error_detail(body, r.status_code))
+        else:
+            truncated = truncate_proxy_json(body, proxy_name)
+            if isinstance(truncated, dict):
+                audit_payload["response"] = truncated.get("body", truncated)
+        _set_audit_details(request, audit_payload)
         return JSONResponse(status_code=r.status_code, content=body)
     finally:
         if tmp_path and os.path.exists(tmp_path):

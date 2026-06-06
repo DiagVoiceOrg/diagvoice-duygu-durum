@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/useAuth';
 import * as cmsApi from '../services/cmsApi';
-import UsageAudioPlayer from './UsageAudioPlayer';
+import UsageLogDetailModal from './UsageLogDetailModal';
 
 function defaultDateRange() {
   const to = new Date();
@@ -332,65 +332,7 @@ export default function AdminUsage() {
       </div>
 
       {detail ? (
-        <div
-          role="dialog"
-          aria-modal
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50,
-            padding: '1rem',
-          }}
-          onClick={() => setDetail(null)}
-        >
-          <div
-            className="admin-shell-inner"
-            style={{
-              maxWidth: 'min(52rem, 100%)',
-              maxHeight: '85vh',
-              overflow: 'auto',
-              background: 'var(--surface, #111827)',
-              color: 'var(--text, #e5e7eb)',
-              borderRadius: 8,
-              padding: '1rem',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Log detayı</h2>
-              <button type="button" className="tab-button secondary" onClick={() => setDetail(null)}>
-                Kapat
-              </button>
-            </div>
-            {detail.has_audio || detail.audio_recording ? (
-              <UsageAudioPlayer
-                token={token}
-                logId={detail.id}
-                recording={detail.audio_recording || { id: detail.id }}
-              />
-            ) : null}
-            <pre
-              style={{
-                marginTop: '0.75rem',
-                fontSize: '0.75rem',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                color: 'var(--text, #e5e7eb)',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 6,
-                padding: '0.75rem',
-              }}
-            >
-              {JSON.stringify(detail, null, 2)}
-            </pre>
-          </div>
-        </div>
+        <UsageLogDetailModal log={detail} token={token} onClose={() => setDetail(null)} />
       ) : null}
     </div>
   );
