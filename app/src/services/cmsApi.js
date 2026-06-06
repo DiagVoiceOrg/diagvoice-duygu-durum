@@ -127,3 +127,12 @@ export async function fetchUsageLogDetail(token, logId) {
   });
   return data;
 }
+
+/** Admin: log ile ilişkili ses kaydı (Bearer gerekir). */
+export async function fetchUsageLogAudio(token, logId) {
+  const { data } = await axios.get(`${base()}/admin/usage/logs/${encodeURIComponent(logId)}/audio`, {
+    headers: { Authorization: `Bearer ${token}` },
+    responseType: 'blob',
+  });
+  return data;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/useAuth';
 import * as cmsApi from '../services/cmsApi';
+import UsageAudioPlayer from './UsageAudioPlayer';
 
 function defaultDateRange() {
   const to = new Date();
@@ -9,6 +10,22 @@ function defaultDateRange() {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
   };
+}
+
+function auditErrorSummary(row) {
+  const d = row?.details;
+  if (!d || typeof d !== 'object') return '—';
+  if (d.error_summary) return String(d.error_summary);
+  if (d.upstream_errors && typeof d.upstream_errors === 'object') {
+    const parts = Object.entries(d.upstream_errors).map(
+      ([k, v]) => `${k}: ${String(v).slice(0, 80)}`,
+    );
+    if (parts.length) return parts.join(' · ');
+  }
+  if (d.upstream_error) return String(d.upstream_error);
+  if (d.error_message) return String(d.error_message);
+  if (d.detail) return typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+  return '—';
 }
 
 export default function AdminUsage() {
@@ -96,9 +113,11 @@ export default function AdminUsage() {
       <div className="admin-page-head">
         <h1>API kullanımı</h1>
         <p style={{ margin: '0.35rem 0 0', color: 'var(--text-muted)', maxWidth: '52rem' }}>
-          Fusion (8085) üzerinden kaydedilen istekler: yol, HTTP durumu, süre ve özet ayrıntılar. Tam STT
-          metni varsayılan olarak saklanmaz; sunucuda <code>AUDIT_LOG_INCLUDE_TRANSCRIPT=1</code> ile
-          açılabilir.
+          Fusion (8085) üzerinden kaydedilen istekler: yol, HTTP durumu, süre ve özet ayrıntılar. Hata
+          kayıtlarında <code>error_summary</code>, <code>upstream_errors</code> veya doğrulama mesajları
+          görünür. Ses içeren istekler <code>data/audio_recordings</code> volume’unda saklanır; detay
+          ekranından dinleyebilirsiniz. Tam STT metni varsayılan olarak saklanmaz; sunucuda{' '}
+          <code>AUDIT_LOG_INCLUDE_TRANSCRIPT=1</code> ile açılabilir.
         </p>
       </div>
 
@@ -246,6 +265,8 @@ export default function AdminUsage() {
                 <th>Metod</th>
                 <th>HTTP</th>
                 <th>ms</th>
+                <th>Hata özeti</th>
+                <th>Ses</th>
                 <th>IP</th>
                 <th />
               </tr>
@@ -260,10 +281,23 @@ export default function AdminUsage() {
                   <td>{row.method}</td>
                   <td>{row.http_status}</td>
                   <td>{row.duration_ms}</td>
+                  <td
+                    title={auditErrorSummary(row)}
+                    style={{ maxWidth: '18rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {auditErrorSummary(row)}
+                  </td>
+                  <td>
+                    {row.has_audio || row.audio_recording ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--accent, #3b82f6)' }}>Kayıt var</span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td title={row.client_ip || ''}>{(row.client_ip || '').slice(0, 24) || '—'}</td>
                   <td>
                     <button type="button" className="tab-button secondary" onClick={() => openDetail(row.id)}>
-                      Detay
+                      {row.has_audio || row.audio_recording ? 'Detay / Dinle' : 'Detay'}
                     </button>
                   </td>
                 </tr>
@@ -333,6 +367,13 @@ export default function AdminUsage() {
                 Kapat
               </button>
             </div>
+            {detail.has_audio || detail.audio_recording ? (
+              <UsageAudioPlayer
+                token={token}
+                logId={detail.id}
+                recording={detail.audio_recording || { id: detail.id }}
+              />
+            ) : null}
             <pre
               style={{
                 marginTop: '0.75rem',

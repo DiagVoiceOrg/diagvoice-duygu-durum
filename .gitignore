@@ -17,6 +17,8 @@ logs/
 
 # Local data / cache
 .DS_Store
+data/audio_recordings/*
+!data/audio_recordings/.gitkeep
 
 # Ortam (tek kaynak depo kökü .env — şablon: .env.example)
 .env

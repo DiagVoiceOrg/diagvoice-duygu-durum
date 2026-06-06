@@ -6,7 +6,9 @@ import json
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
+from cms.audio_recordings import resolve_recording_file
 from cms.deps import require_admin
 from cms.usage_audit import AUDIT_MAX_JSON, get_log_by_id, get_summary, list_logs
 
@@ -54,6 +56,8 @@ async def usage_logs(
         from_iso=from_,
         to_iso=to,
     )
+    for row in rows:
+        row["has_audio"] = bool(row.get("audio_recording"))
     return {"items": rows, "total": total, "skip": skip, "limit": limit}
 
 
@@ -63,4 +67,23 @@ async def usage_log_detail(log_id: str, _: Annotated[dict, Depends(require_admin
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log not found")
     doc["details"] = _clip_details_for_response(doc.get("details"))
+    doc["has_audio"] = bool(doc.get("audio_recording"))
     return doc
+
+
+@router.get("/logs/{log_id}/audio")
+async def usage_log_audio(log_id: str, _: Annotated[dict, Depends(require_admin)]) -> FileResponse:
+    doc = await get_log_by_id(log_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log not found")
+    recording = doc.get("audio_recording")
+    path = resolve_recording_file(recording)
+    if path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio recording not found")
+    media_type = "application/octet-stream"
+    if isinstance(recording, dict) and recording.get("content_type"):
+        media_type = str(recording["content_type"])
+    filename = "recording"
+    if isinstance(recording, dict) and recording.get("original_filename"):
+        filename = str(recording["original_filename"])
+    return FileResponse(path, media_type=media_type, filename=filename)

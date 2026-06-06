@@ -19,9 +19,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-change-me}
       CMS_ADMIN_EMAIL: ${CMS_ADMIN_EMAIL:-admin@localhost}
       CMS_ADMIN_PASSWORD: ${CMS_ADMIN_PASSWORD:-admin123}
+      AUDIT_AUDIO_STORAGE_DIR: /data/audio_recordings
     volumes:
       - ./diagvoice-backend:/app
       - backend_hf_cache:/app/.cache
+      - ./data/audio_recordings:/data/audio_recordings
 
 volumes:
   backend_hf_cache:

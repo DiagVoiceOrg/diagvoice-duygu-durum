@@ -115,6 +115,125 @@ def redact_wellness_details(details: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+AUDIT_ERROR_BODY_MAX = max(512, int(os.environ.get("AUDIT_LOG_ERROR_BODY_BYTES", "16384")))
+
+
+def _clip_text(value: Any, limit: int = 2000) -> str:
+    s = str(value).strip()
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def normalize_error_detail(detail: Any, *, limit: int = 2000) -> Any:
+    if detail is None:
+        return None
+    if isinstance(detail, str):
+        return _clip_text(detail, limit)
+    if isinstance(detail, (dict, list)):
+        try:
+            raw = json.dumps(detail, default=str, ensure_ascii=False).encode("utf-8")
+        except Exception:
+            return _clip_text(detail, limit)
+        if len(raw) <= limit:
+            return detail
+        return {"_truncated": True, "preview": raw[:limit].decode("utf-8", errors="replace")}
+    return _clip_text(detail, limit)
+
+
+def summarize_validation_errors(errors: list[Any]) -> str:
+    if not errors:
+        return "Request validation failed"
+    first = errors[0]
+    if not isinstance(first, dict):
+        return _clip_text(first)
+    loc = ".".join(str(x) for x in first.get("loc", ()))
+    msg = first.get("msg", "Validation error")
+    return f"{loc}: {msg}" if loc else str(msg)
+
+
+def error_details_from_validation(errors: list[Any]) -> dict[str, Any]:
+    clipped = errors[:20] if isinstance(errors, list) else []
+    return {
+        "error_type": "request_validation",
+        "error_source": "fusion_handler",
+        "error_summary": summarize_validation_errors(clipped),
+        "validation_errors": clipped,
+    }
+
+
+def error_details_from_http_exception(status_code: int, detail: Any) -> dict[str, Any]:
+    return {
+        "error_type": "http_exception",
+        "error_source": "fusion_handler",
+        "http_status": status_code,
+        "error_summary": _clip_text(detail if isinstance(detail, str) else json.dumps(detail, default=str)),
+        "detail": normalize_error_detail(detail),
+    }
+
+
+def error_details_from_unhandled(exc: BaseException) -> dict[str, Any]:
+    return {
+        "error_type": type(exc).__name__,
+        "error_source": "fusion_unhandled",
+        "error_summary": _clip_text(exc),
+        "error_message": _clip_text(exc, 800),
+    }
+
+
+def error_details_from_response_body(http_status: int, body: bytes) -> dict[str, Any]:
+    """Middleware yedek: handler audit yazmadıysa HTTP yanıt gövdesinden özet çıkar."""
+    out: dict[str, Any] = {
+        "error_type": "http_error",
+        "error_source": "response_body",
+        "http_status": http_status,
+    }
+    if not body:
+        out["error_summary"] = f"HTTP {http_status} (empty body)"
+        return out
+
+    clipped = body[:AUDIT_ERROR_BODY_MAX]
+    text = clipped.decode("utf-8", errors="replace").strip()
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        out["error_summary"] = _clip_text(text or f"HTTP {http_status}")
+        if len(body) > AUDIT_ERROR_BODY_MAX:
+            out["_body_truncated"] = True
+        return out
+
+    if isinstance(parsed, dict):
+        if parsed.get("detail") is not None:
+            out["detail"] = normalize_error_detail(parsed["detail"])
+            out["error_summary"] = _clip_text(
+                parsed["detail"] if isinstance(parsed["detail"], str) else out["detail"]
+            )
+        elif parsed.get("error") is not None:
+            out["error_message"] = _clip_text(parsed["error"])
+            out["error_summary"] = out["error_message"]
+        else:
+            out["response_body"] = normalize_error_detail(parsed)
+            out["error_summary"] = _clip_text(parsed)
+    else:
+        out["error_summary"] = _clip_text(parsed)
+
+    if len(body) > AUDIT_ERROR_BODY_MAX:
+        out["_body_truncated"] = True
+    return out
+
+
+def merge_error_audit(existing: Any, error_info: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(existing, dict):
+        return {**existing, **error_info}
+    return dict(error_info)
+
+
+def set_request_error_audit(request: Any, error_info: dict[str, Any]) -> None:
+    """Exception handler / middleware — mevcut audit_details ile birleştir."""
+    if request is None or not hasattr(request, "state"):
+        return
+    existing = getattr(request.state, "audit_details", None)
+    request.state.audit_details = merge_error_audit(existing, error_info)
+
+
 def truncate_proxy_json(body: Any, proxy_name: str) -> Any:
     if not isinstance(body, dict):
         return {"proxy": proxy_name, "raw_type": type(body).__name__}
@@ -140,6 +259,7 @@ async def insert_fusion_audit(
     duration_ms: float,
     client_ip: str,
     details: Optional[dict[str, Any]] = None,
+    audio_recording: Optional[dict[str, Any]] = None,
 ) -> None:
     if not AUDIT_LOG_ENABLED or _skip_path(path):
         return
@@ -156,6 +276,8 @@ async def insert_fusion_audit(
             "outcome": outcome_from_status(http_status),
             "details": details,
         }
+        if audio_recording:
+            doc["audio_recording"] = audio_recording
         await get_db().fusion_api_logs.insert_one(doc)
     except Exception:
         _log.exception("fusion_api_logs insert failed path=%s", path)
@@ -169,6 +291,7 @@ def schedule_fusion_audit(
     duration_ms: float,
     client_ip: str,
     details: Optional[dict[str, Any]] = None,
+    audio_recording: Optional[dict[str, Any]] = None,
 ) -> None:
     """Yanıtı bloklamamak için arka planda yaz."""
     if not AUDIT_LOG_ENABLED or _skip_path(path):
@@ -183,6 +306,7 @@ def schedule_fusion_audit(
             duration_ms=duration_ms,
             client_ip=client_ip,
             details=details,
+            audio_recording=audio_recording,
         )
     )
 

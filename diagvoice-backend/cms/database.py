@@ -34,3 +34,4 @@ async def ensure_indexes() -> None:
     await db.fusion_api_logs.create_index([("path", 1), ("created_at", -1)])
     await db.fusion_api_logs.create_index([("outcome", 1), ("created_at", -1)])
     await db.fusion_api_logs.create_index([("details.route", 1), ("created_at", -1)])
+    await db.fusion_api_logs.create_index([("audio_recording.id", 1)])

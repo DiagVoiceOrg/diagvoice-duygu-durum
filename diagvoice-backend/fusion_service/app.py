@@ -19,9 +19,10 @@ import fastapi
 import httpx
 import uvicorn
 from fastapi import File, Form, HTTPException, Request, UploadFile
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from fusion_service.openapi_tags import OPENAPI_TAGS, PROXY_JSON_RESPONSES
 from fusion_service.schemas import (
@@ -78,8 +79,10 @@ async def _app_lifespan(_app: fastapi.FastAPI):
             _log = logging.getLogger(__name__)
             try:
                 from cms.database import ensure_indexes
+                from cms.audio_recordings import ensure_storage_dir
 
                 await ensure_indexes()
+                ensure_storage_dir()
                 _log.info("CMS Mongo indeksleri hazır.")
             except Exception:
                 _log.exception("CMS ensure_indexes başarısız (izin / ağ / URI kontrol et).")
@@ -124,12 +127,53 @@ _cors_origins_raw = os.environ.get(
 _cors_allow_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 
 @app.exception_handler(RequestValidationError)
-async def _wellness_validation_exception_handler(request: Request, exc: RequestValidationError):
+async def _request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    from cms.usage_audit import error_details_from_validation, set_request_error_audit
+
+    errs = exc.errors()
+    set_request_error_audit(request, error_details_from_validation(errs))
     if request.url.path.startswith("/wellness/"):
-        errs = exc.errors()
         msg = errs[0].get("msg", "Geçersiz istek.") if errs else "Geçersiz istek."
         return JSONResponse(status_code=400, content={"error": str(msg)})
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(status_code=422, content={"detail": errs})
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    from cms.usage_audit import error_details_from_http_exception, set_request_error_audit
+
+    set_request_error_audit(request, error_details_from_http_exception(exc.status_code, exc.detail))
+    if isinstance(exc.detail, (dict, list)):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(ResponseValidationError)
+async def _response_validation_exception_handler(request: Request, exc: ResponseValidationError):
+    from cms.usage_audit import set_request_error_audit, summarize_validation_errors
+
+    errs = exc.errors()
+    set_request_error_audit(
+        request,
+        {
+            "error_type": "response_validation",
+            "error_source": "fusion_handler",
+            "error_summary": summarize_validation_errors(errs),
+            "validation_errors": errs[:20],
+        },
+    )
+    return JSONResponse(status_code=500, content={"detail": "Response validation error", "errors": errs})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    from cms.usage_audit import error_details_from_unhandled, set_request_error_audit
+
+    if isinstance(exc, HTTPException):
+        raise exc
+    _log.exception("unhandled_exception path=%s", request.url.path)
+    set_request_error_audit(request, error_details_from_unhandled(exc))
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 app.add_middleware(
@@ -144,7 +188,14 @@ app.add_middleware(
 @app.middleware("http")
 async def fusion_usage_audit_middleware(request: Request, call_next):
     """MongoDB fusion_api_logs: yol, metod, HTTP durumu, süre, istemci IP; handler `request.state.audit_details` ile zenginleştirir."""
-    from cms.usage_audit import AUDIT_LOG_ENABLED, _skip_path, client_ip_from_request, schedule_fusion_audit
+    from cms.usage_audit import (
+        AUDIT_LOG_ENABLED,
+        _skip_path,
+        client_ip_from_request,
+        error_details_from_response_body,
+        schedule_fusion_audit,
+        set_request_error_audit,
+    )
 
     path = request.url.path
     if not _CMS_ENABLED or not AUDIT_LOG_ENABLED or _skip_path(path):
@@ -153,8 +204,23 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time.perf_counter() - t0) * 1000.0
     details = getattr(request.state, "audit_details", None)
+    if details is None and response.status_code >= 400:
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        set_request_error_audit(request, error_details_from_response_body(response.status_code, body))
+        details = getattr(request.state, "audit_details", None)
+        response = Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )
     if details is not None and not isinstance(details, dict):
         details = {"value": str(details)[:2000]}
+    audio_recording = getattr(request.state, "audio_recording", None)
+    if audio_recording is not None and not isinstance(audio_recording, dict):
+        audio_recording = None
     schedule_fusion_audit(
         path=path,
         method=request.method,
@@ -162,6 +228,7 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
         duration_ms=duration_ms,
         client_ip=client_ip_from_request(request.scope.get("headers") or []),
         details=details,
+        audio_recording=audio_recording,
     )
     return response
 
@@ -545,6 +612,49 @@ def _set_audit_details(request: Optional[Request], details: Dict[str, Any]) -> N
         request.state.audit_details = details
 
 
+def _upstream_error_fields(*pairs: tuple[str, Optional[str]]) -> dict[str, str]:
+    """Başarısız upstream adımlarını audit için özetler."""
+    failed = {name: err for name, err in pairs if err}
+    return {"upstream_errors": failed} if failed else {}
+
+
+def _proxy_upstream_error_detail(body: Any, http_status: int) -> dict[str, Any]:
+    if http_status < 400:
+        return {}
+    from cms.usage_audit import normalize_error_detail
+
+    if isinstance(body, dict):
+        if body.get("detail") is not None:
+            return {"upstream_error": normalize_error_detail(body["detail"])}
+        if body.get("error") is not None:
+            return {"upstream_error": normalize_error_detail(body["error"])}
+        return {"upstream_error_body": normalize_error_detail(body)}
+    if body is not None:
+        return {"upstream_error": normalize_error_detail(body)}
+    return {"upstream_error": f"HTTP {http_status}"}
+
+
+async def _persist_upload_audio(
+    request: Optional[Request],
+    *,
+    tmp_path: Optional[str] = None,
+    mem_body: Optional[bytes] = None,
+    original_filename: str = "audio",
+    content_type: str = "application/octet-stream",
+) -> None:
+    if request is None:
+        return
+    from cms.audio_recordings import persist_request_audio
+
+    await persist_request_audio(
+        request,
+        tmp_path=tmp_path,
+        body=mem_body,
+        original_filename=original_filename,
+        content_type=content_type,
+    )
+
+
 async def _proxy_file_upload(
     upstream_url: str,
     file: UploadFile,
@@ -610,6 +720,14 @@ async def _proxy_file_upload(
             nbytes,
             storage,
             (time.perf_counter() - t_req) * 1000,
+        )
+
+        await _persist_upload_audio(
+            request,
+            tmp_path=tmp_path,
+            mem_body=mem_body,
+            original_filename=fname,
+            content_type=ctype,
         )
 
         client = _upstream_client()
@@ -712,6 +830,7 @@ async def _proxy_file_upload(
                 "bytes": nbytes,
                 "upstream_http": r.status_code,
                 "storage": storage,
+                **_proxy_upstream_error_detail(body, r.status_code),
             },
         )
         return JSONResponse(status_code=r.status_code, content=body)
@@ -774,7 +893,11 @@ async def _proxy_json(
         r.status_code,
         (time.perf_counter() - t0) * 1000,
     )
-    request.state.audit_details = truncate_proxy_json(body, proxy_name)
+    request.state.audit_details = {
+        **truncate_proxy_json(body, proxy_name),
+        "upstream_http": r.status_code,
+        **_proxy_upstream_error_detail(body if isinstance(body, dict) else {"detail": body}, r.status_code),
+    }
     return JSONResponse(status_code=r.status_code, content=body)
 
 
@@ -1039,6 +1162,8 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
     Yanıt alanları analyze-fused ile uyumlu: audio / disease ve *_error.
     """
     tmp_path: Optional[str] = None
+    upload_name = "audio.wav"
+    file_bytes: Optional[int] = None
     try:
         suffix = ""
         if file.filename:
@@ -1061,11 +1186,18 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
         disease_err: Optional[str] = None
 
         upload_name = (file.filename or "audio.wav").replace("/", "_").replace("\\", "_")
+        file_bytes = os.path.getsize(disk)
         ct = file.content_type or "application/octet-stream"
+        await _persist_upload_audio(
+            request,
+            tmp_path=disk,
+            original_filename=upload_name,
+            content_type=ct,
+        )
         _log.info(
             "togg_analyze begin upload_name=%s bytes=%d",
             upload_name,
-            os.path.getsize(disk),
+            file_bytes,
         )
 
         async def _run_voice_sentiment(c: httpx.AsyncClient) -> None:
@@ -1105,27 +1237,41 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
         )
         _log.info("togg_analyze parallel_gather_done total_ms=%.0f", (time.perf_counter() - t_par) * 1000)
 
+        from cms.usage_audit import redact_fused_details
+
+        out: Dict[str, Any] = {
+            "audio": audio_result,
+            "audio_error": audio_err,
+            "disease": disease_result,
+            "disease_error": disease_err,
+        }
+        request.state.audit_details = {
+            "route": "togg-analyze",
+            "upload_name": upload_name,
+            "file_bytes": file_bytes,
+            "response": redact_fused_details(out),
+            **_upstream_error_fields(("voice_sentiment", audio_err), ("disease", disease_err)),
+        }
+        return out
+    except Exception as e:
+        _set_audit_details(
+            request,
+            {
+                "route": "togg-analyze",
+                "upload_name": upload_name,
+                "file_bytes": file_bytes,
+                "error_type": type(e).__name__,
+                "error_source": "togg-analyze_handler",
+                "error_summary": str(e)[:800],
+            },
+        )
+        raise
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:
                 pass
-
-    from cms.usage_audit import redact_fused_details
-
-    out: Dict[str, Any] = {
-        "audio": audio_result,
-        "audio_error": audio_err,
-        "disease": disease_result,
-        "disease_error": disease_err,
-    }
-    request.state.audit_details = {
-        "route": "togg-analyze",
-        "upload_name": upload_name,
-        "response": redact_fused_details(out),
-    }
-    return out
 
 
 @app.post(
@@ -1144,6 +1290,9 @@ async def analyze_fused(
     ve isteğe bağlı benchmark_v2 çalıştırır; metin+ses valence birleşimi `fused` alanında döner.
     """
     tmp_path: Optional[str] = None
+    upload_name = "audio.wav"
+    stt_lang = "tr"
+    _disk_bytes: Optional[int] = None
     try:
         # Stream upload to disk to avoid holding large files in memory.
         suffix = ""
@@ -1182,6 +1331,12 @@ async def analyze_fused(
         ct = file.content_type or "application/octet-stream"
         _disk_bytes = os.path.getsize(disk)
         stt_lang = _normalize_speech_language_for_stt(speech_language)
+        await _persist_upload_audio(
+            request,
+            tmp_path=disk,
+            original_filename=upload_name,
+            content_type=ct,
+        )
         _log.info(
             "analyze_fused begin upload_name=%s bytes=%d speech_language=%s",
             upload_name,
@@ -1337,93 +1492,117 @@ async def analyze_fused(
         else:
             _log.info("analyze_fused benchmark_v2 skipped (INFERENCE_API_URL empty)")
 
+        # Normalize to valence [0,1]
+        # text_result: "sentiment" veya "label" (model formatına göre)
+        valence_text = None
+        if text_result and "score" in text_result:
+            sentiment_label = text_result.get("sentiment") or text_result.get("label")
+            if sentiment_label is not None:
+                valence_text = text_sentiment_to_valence(sentiment_label, text_result.get("score"))
+
+        # FE uyumu: text_sentiment'ta "sentiment" anahtarı olsun (bazı modeller "label" döner)
+        text_sentiment_for_response = None
+        if text_result:
+            text_sentiment_for_response = dict(text_result)
+            if "sentiment" not in text_sentiment_for_response and "label" in text_sentiment_for_response:
+                text_sentiment_for_response["sentiment"] = text_sentiment_for_response["label"]
+
+        valence_audio = None
+        if audio_result and "probs" in audio_result:
+            valence_audio = audio_probs_to_valence(audio_result.get("probs"), audio_result.get("intensity"))
+
+        # Dynamic weighting
+        text_conf = text_valence_confidence(valence_text)
+        audio_conf = audio_overall_confidence(
+            audio_result.get("intensity") if isinstance(audio_result, dict) else None,
+            audio_result.get("probs") if isinstance(audio_result, dict) else None,
+        )
+
+        w_text_used = FUSION_W_TEXT
+        if DYNAMIC_FUSION and valence_text is not None and valence_audio is not None and text_conf is not None and audio_conf is not None:
+            # Higher confidence -> higher weight.
+            # Map relative confidence to [W_TEXT_MIN..W_TEXT_MAX]
+            ratio = text_conf / (text_conf + audio_conf + 1e-9)
+            w_text_used = W_TEXT_MIN + (W_TEXT_MAX - W_TEXT_MIN) * ratio
+
+        disagreement = None
+        if valence_text is not None and valence_audio is not None:
+            disagreement = abs(float(valence_text) - float(valence_audio))
+
+        fused = fuse(valence_text, valence_audio, w_text_used)
+        _log.info(
+            "analyze_fused response_ready stt_ok=%s transcript_len=%d",
+            stt_err is None,
+            len((stt_text or "").strip()),
+        )
+
+        from cms.usage_audit import redact_fused_details
+
+        out: Dict[str, Any] = {
+            "text": stt_text,
+            "text_error": stt_err,
+            "audio": audio_result,
+            "audio_error": audio_err,
+            "disease": disease_result,
+            "disease_error": disease_err,
+            "mental_fitness": mental_fitness_result,
+            "mental_fitness_error": mental_fitness_err,
+            "age_gender": age_gender_result,
+            "age_gender_error": age_gender_err,
+            "depression": depression_result,
+            "depression_error": depression_err,
+            "benchmark_v2": benchmark_v2_result,
+            "benchmark_v2_error": benchmark_v2_err,
+            "text_sentiment": text_sentiment_for_response,
+            "text_sentiment_error": text_err,
+            "valence_text": valence_text,
+            "valence_audio": valence_audio,
+            "confidence": {
+                "text": text_conf,
+                "audio": audio_conf,
+                "disagreement": disagreement,
+                "dynamic_fusion": DYNAMIC_FUSION,
+            },
+            "fused": fused,
+        }
+        request.state.audit_details = {
+            "route": "analyze-fused",
+            "upload_name": upload_name,
+            "speech_language": stt_lang,
+            "file_bytes": _disk_bytes,
+            "response": redact_fused_details(out),
+            **_upstream_error_fields(
+                ("stt", stt_err),
+                ("voice_sentiment", audio_err),
+                ("disease", disease_err),
+                ("mental_fitness", mental_fitness_err),
+                ("age_gender", age_gender_err),
+                ("depression", depression_err),
+                ("text_sentiment", text_err),
+                ("benchmark_v2", benchmark_v2_err),
+            ),
+        }
+        return out
+    except Exception as e:
+        _set_audit_details(
+            request,
+            {
+                "route": "analyze-fused",
+                "upload_name": upload_name,
+                "speech_language": stt_lang,
+                "file_bytes": _disk_bytes,
+                "error_type": type(e).__name__,
+                "error_source": "analyze-fused_handler",
+                "error_summary": str(e)[:800],
+            },
+        )
+        raise
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:
                 pass
-
-    # Normalize to valence [0,1]
-    # text_result: "sentiment" veya "label" (model formatına göre)
-    valence_text = None
-    if text_result and "score" in text_result:
-        sentiment_label = text_result.get("sentiment") or text_result.get("label")
-        if sentiment_label is not None:
-            valence_text = text_sentiment_to_valence(sentiment_label, text_result.get("score"))
-
-    # FE uyumu: text_sentiment'ta "sentiment" anahtarı olsun (bazı modeller "label" döner)
-    text_sentiment_for_response = None
-    if text_result:
-        text_sentiment_for_response = dict(text_result)
-        if "sentiment" not in text_sentiment_for_response and "label" in text_sentiment_for_response:
-            text_sentiment_for_response["sentiment"] = text_sentiment_for_response["label"]
-
-    valence_audio = None
-    if audio_result and "probs" in audio_result:
-        valence_audio = audio_probs_to_valence(audio_result.get("probs"), audio_result.get("intensity"))
-
-    # Dynamic weighting
-    text_conf = text_valence_confidence(valence_text)
-    audio_conf = audio_overall_confidence(
-        audio_result.get("intensity") if isinstance(audio_result, dict) else None,
-        audio_result.get("probs") if isinstance(audio_result, dict) else None,
-    )
-
-    w_text_used = FUSION_W_TEXT
-    if DYNAMIC_FUSION and valence_text is not None and valence_audio is not None and text_conf is not None and audio_conf is not None:
-        # Higher confidence -> higher weight.
-        # Map relative confidence to [W_TEXT_MIN..W_TEXT_MAX]
-        ratio = text_conf / (text_conf + audio_conf + 1e-9)
-        w_text_used = W_TEXT_MIN + (W_TEXT_MAX - W_TEXT_MIN) * ratio
-
-    disagreement = None
-    if valence_text is not None and valence_audio is not None:
-        disagreement = abs(float(valence_text) - float(valence_audio))
-
-    fused = fuse(valence_text, valence_audio, w_text_used)
-    _log.info(
-        "analyze_fused response_ready stt_ok=%s transcript_len=%d",
-        stt_err is None,
-        len((stt_text or "").strip()),
-    )
-
-    from cms.usage_audit import redact_fused_details
-
-    out: Dict[str, Any] = {
-        "text": stt_text,
-        "text_error": stt_err,
-        "audio": audio_result,
-        "audio_error": audio_err,
-        "disease": disease_result,
-        "disease_error": disease_err,
-        "mental_fitness": mental_fitness_result,
-        "mental_fitness_error": mental_fitness_err,
-        "age_gender": age_gender_result,
-        "age_gender_error": age_gender_err,
-        "depression": depression_result,
-        "depression_error": depression_err,
-        "benchmark_v2": benchmark_v2_result,
-        "benchmark_v2_error": benchmark_v2_err,
-        "text_sentiment": text_sentiment_for_response,
-        "text_sentiment_error": text_err,
-        "valence_text": valence_text,
-        "valence_audio": valence_audio,
-        "confidence": {
-            "text": text_conf,
-            "audio": audio_conf,
-            "disagreement": disagreement,
-            "dynamic_fusion": DYNAMIC_FUSION,
-        },
-        "fused": fused,
-    }
-    request.state.audit_details = {
-        "route": "analyze-fused",
-        "upload_name": upload_name,
-        "speech_language": stt_lang,
-        "response": redact_fused_details(out),
-    }
-    return out
 
 
 if __name__ == "__main__":

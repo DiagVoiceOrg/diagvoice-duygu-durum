@@ -119,6 +119,15 @@ async def wellness_companion_chat(request: Request):
             filename = upload.filename or "recording.webm"
             content_type_file = upload.content_type or "application/octet-stream"
 
+            from cms.audio_recordings import persist_request_audio
+
+            await persist_request_audio(
+                request,
+                body=audio_bytes,
+                original_filename=filename,
+                content_type=content_type_file,
+            )
+
             request.state.wellness_audit_base = wellness_audit_base(
                 mode="voice",
                 locale=locale,
