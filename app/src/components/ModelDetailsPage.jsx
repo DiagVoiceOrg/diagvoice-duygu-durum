@@ -1,5 +1,5 @@
 import React from 'react';
-import { mergeCardCopy } from '../lib/cardCopy';
+import { mergeCardCopy, resolveUnifiedEmotionWarn } from '../lib/cardCopy';
 import {
   demoT,
   agreementUiLabel,
@@ -110,6 +110,8 @@ const AGE_DISPLAY_SHIFT_BINS = 1;
  * @param {object|null} [props.depressionResult]
  * @param {{ sentiment: string|null, score: number|null }} [props.sentimentResult]
  * @param {object|null} [props.unifiedEmotionResult]
+ * @param {string|null} [props.unifiedEmotionError]
+ * @param {boolean} [props.analyzed]
  */
 export default function ModelDetailsPage({
   demoLang = 'tr',
@@ -135,6 +137,7 @@ export default function ModelDetailsPage({
   confidenceResult,
   unifiedEmotionResult = null,
   unifiedEmotionError = null,
+  analyzed = false,
 }) {
   const lang = normalizeDemoLang(demoLang);
 
@@ -287,9 +290,18 @@ export default function ModelDetailsPage({
           );
         }
         if (!unifiedEmotionResult?.probs?.length) {
+          const unifiedWarn = resolveUnifiedEmotionWarn(lang, demoT, {
+            order,
+            analyzed,
+            unifiedEmotionResult,
+            unifiedEmotionError,
+            textSttError,
+            sentimentPipelineError,
+            audioEmotionError,
+          });
           return (
-            <DetailCard key={cardId} title={copy.displayTitle}>
-              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            <DetailCard key={cardId} title={copy.displayTitle} warn={unifiedWarn || null}>
+              {!unifiedWarn ? <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p> : null}
             </DetailCard>
           );
         }

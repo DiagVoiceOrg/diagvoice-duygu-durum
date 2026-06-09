@@ -81,6 +81,9 @@ async function postEmotionFusion(textSentiment, audio) {
       pred_id: typeof audio.pred_id === 'number' ? audio.pred_id : undefined,
     };
   }
+  if (!body.text_sentiment && !body.audio) {
+    throw new Error('emotion fusion requires text_sentiment and/or audio');
+  }
   const { data } = await axios.post(`${origin}/analyze-emotion-fusion`, body, {
     timeout: Number.isFinite(API_TIMEOUT_MS) ? API_TIMEOUT_MS : 600000,
     headers: { 'Content-Type': 'application/json' },
@@ -97,24 +100,24 @@ function normalizeTextSentiment(raw) {
   return out;
 }
 
-function canRunEmotionFusion(wantsUnifiedFusion, textSentiment, audio, textErr, audioErr) {
-  return (
-    wantsUnifiedFusion &&
+function canRunEmotionFusion(textSentiment, audio, textErr, audioErr) {
+  const hasText =
     textSentiment &&
     typeof textSentiment.score === 'number' &&
+    !textErr;
+  const hasAudio =
     audio &&
     Array.isArray(audio.probs) &&
     audio.probs.length >= 4 &&
-    !textErr &&
-    !audioErr
-  );
+    !audioErr;
+  return hasText || hasAudio;
 }
 
 /** Profilde unified_emotion kartı varsa POST /analyze-emotion-fusion ile doldurur. */
 async function enrichWithUnifiedFusion(result, wantsUnifiedFusion, profileOrder) {
   if (!wantsUnifiedFusion) return result;
 
-  if (!profileOrder.includes('sentiment') || !profileOrder.includes('audio_emotion')) {
+  if (!profileOrder.includes('sentiment') && !profileOrder.includes('audio_emotion')) {
     return {
       ...result,
       unified_emotion_error:
@@ -127,17 +130,27 @@ async function enrichWithUnifiedFusion(result, wantsUnifiedFusion, profileOrder)
   const textErr = result.text_sentiment_error;
   const audioErr = result.audio_error;
 
-  if (!canRunEmotionFusion(wantsUnifiedFusion, textSentiment, audio, textErr, audioErr)) {
+  const hasText =
+    textSentiment && typeof textSentiment.score === 'number' && !textErr;
+  const hasAudio =
+    audio && Array.isArray(audio.probs) && audio.probs.length >= 4 && !audioErr;
+
+  if (!canRunEmotionFusion(textSentiment, audio, textErr, audioErr)) {
+    let unifiedEmotionError = null;
+    if (textErr && !hasAudio) {
+      unifiedEmotionError = textErr;
+    } else if (audioErr) {
+      unifiedEmotionError = audioErr;
+    }
     return {
       ...result,
       unified_emotion: null,
-      unified_emotion_error: null,
+      unified_emotion_error: unifiedEmotionError,
     };
   }
 
-  // Birleşik emosyon yalnızca POST /analyze-emotion-fusion ile gelir; analyze-fused alanı kullanılmaz.
   try {
-    const fusion = await postEmotionFusion(textSentiment, audio);
+    const fusion = await postEmotionFusion(hasText ? textSentiment : null, hasAudio ? audio : null);
     return {
       ...result,
       text_sentiment: textSentiment ?? result.text_sentiment,
@@ -166,11 +179,12 @@ function shouldUseAnalyzeFused(uniqueIds) {
   return s.size === CARD_IDS.length && CARD_IDS.every((id) => s.has(id));
 }
 
-function needsVoiceToText(uniqueIds) {
+function needsVoiceToText(uniqueIds, wantsUnifiedFusion = false) {
   return (
     uniqueIds.includes('transcript') ||
     uniqueIds.includes('sentiment') ||
-    uniqueIds.includes('benchmark_v2')
+    uniqueIds.includes('benchmark_v2') ||
+    wantsUnifiedFusion
   );
 }
 
@@ -209,7 +223,7 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
   let textResult = null;
   let textErr = null;
 
-  const sttNeeded = needsVoiceToText(uniqueIds);
+  const sttNeeded = needsVoiceToText(uniqueIds, wantsUnifiedFusion);
 
   const phase1 = [];
 
@@ -224,7 +238,7 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
         }),
     );
   }
-  if (uniqueIds.includes('audio_emotion')) {
+  if (uniqueIds.includes('audio_emotion') || wantsUnifiedFusion) {
     phase1.push(
       postMultipart('/analyze-voice-sentiment', audioData)
         .then((d) => {
@@ -274,11 +288,15 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
   const transcript = (sttText ?? '').trim();
 
   const phase2 = [];
-  if (uniqueIds.includes('sentiment')) {
+  if (uniqueIds.includes('sentiment') || wantsUnifiedFusion) {
     if (!sttNeeded) {
       textErr = 'Metin duygusu için metin gerekir; profile transcript, benchmark veya sentiment ile STT tetikleyin.';
     } else if (sttErr) {
       textErr = `text_sentiment skipped: STT failed (${sttErr})`;
+    } else if (!transcript) {
+      if (uniqueIds.includes('sentiment')) {
+        textErr = 'skipped: empty transcript after STT';
+      }
     } else {
       phase2.push(
         postTextSentiment(transcript)

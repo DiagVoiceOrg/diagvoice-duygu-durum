@@ -41,3 +41,45 @@ export function resolveCardOrder(profileCards) {
   if (!profileCards?.length) return [...DEFAULT_CARD_ORDER];
   return profileCards.map((c) => c.id).filter(Boolean);
 }
+
+/**
+ * Birleşik emosyon kartı için kullanıcıya gösterilecek uyarı (analiz sonrası, sonuç yokken).
+ * @param {string} lang
+ * @param {(lang: string, key: string, vars?: object) => string} t
+ */
+export function resolveUnifiedEmotionWarn(
+  lang,
+  t,
+  {
+    order,
+    analyzed,
+    unifiedEmotionResult,
+    unifiedEmotionError,
+    textSttError,
+    sentimentPipelineError,
+    audioEmotionError,
+  },
+) {
+  if (!order.includes('unified_emotion') || unifiedEmotionResult?.probs?.length) {
+    return null;
+  }
+  if (!analyzed) {
+    return null;
+  }
+  if (unifiedEmotionError) {
+    return unifiedEmotionError;
+  }
+  if (textSttError) {
+    return `${t(lang, 'mdSttErrorTitle')}: ${textSttError}`;
+  }
+  if (sentimentPipelineError) {
+    return sentimentPipelineError;
+  }
+  if (audioEmotionError) {
+    return audioEmotionError;
+  }
+  if (!order.includes('sentiment') && !order.includes('audio_emotion')) {
+    return t(lang, 'unifiedEmotionProfileNeed');
+  }
+  return t(lang, 'unifiedEmotionFusionFail');
+}

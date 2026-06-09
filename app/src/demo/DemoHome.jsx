@@ -9,7 +9,7 @@ import CardChrome from '../components/CardChrome';
 import { analyzeByProfileCards } from '../services/analyzePartial';
 import logo from '../logo.jpg';
 import ModelDetailsPage from '../components/ModelDetailsPage';
-import { mergeCardCopy, resolveCardOrder } from '../lib/cardCopy';
+import { mergeCardCopy, resolveCardOrder, resolveUnifiedEmotionWarn } from '../lib/cardCopy';
 import {
   DEMO_LANGS,
   demoT,
@@ -255,19 +255,8 @@ export default function DemoHome({
         );
 
       case 'unified_emotion': {
-        if (unifiedEmotionError) {
-          return (
-            <div className="card emotion-card unified-emotion-card" key={cardId}>
-              <CardChrome copy={copy}>
-                <div className="error" style={{ marginTop: 0 }}>
-                  {unifiedEmotionError}
-                </div>
-              </CardChrome>
-            </div>
-          );
-        }
-        if (!unifiedEmotionResult?.probs?.length) return null;
-        const agreement = unifiedEmotionResult.agreement;
+        if (unifiedEmotionResult?.probs?.length) {
+          const agreement = unifiedEmotionResult.agreement;
         const agreementColor =
           agreement === 'high' ? '#10b981' : agreement === 'medium' ? '#f59e0b' : '#ef4444';
         return (
@@ -304,6 +293,24 @@ export default function DemoHome({
                   />
                 ))}
               </div>
+            </CardChrome>
+          </div>
+        );
+        }
+        const unifiedWarn = resolveUnifiedEmotionWarn(lang, demoT, {
+          order,
+          analyzed: !!currentAnalysisSource,
+          unifiedEmotionResult,
+          unifiedEmotionError,
+          textSttError,
+          sentimentPipelineError,
+          audioEmotionError,
+        });
+        if (!unifiedWarn) return null;
+        return (
+          <div className="card emotion-card unified-emotion-card" key={cardId}>
+            <CardChrome copy={copy}>
+              <div className="error">{unifiedWarn}</div>
             </CardChrome>
           </div>
         );
@@ -705,6 +712,7 @@ export default function DemoHome({
             confidenceResult={confidenceResult}
             unifiedEmotionResult={unifiedEmotionResult}
             unifiedEmotionError={unifiedEmotionError}
+            analyzed={!!currentAnalysisSource}
           />
         )}
       </section>

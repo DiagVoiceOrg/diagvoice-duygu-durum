@@ -40,7 +40,7 @@ STT_CHUNK_SEC = max(5.0, min(120.0, STT_CHUNK_SEC))
 STT_CHUNK_OVERLAP_SEC = float(os.environ.get("STT_CHUNK_OVERLAP_SEC", "5"))
 STT_CHUNK_OVERLAP_SEC = max(0.0, min(STT_CHUNK_SEC - 1.0, STT_CHUNK_OVERLAP_SEC))
 STT_NUM_BEAMS = max(1, int(os.environ.get("STT_NUM_BEAMS", "5")))
-STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "448")))
+STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "444")))
 STT_TRIM_TOP_DB = float(os.environ.get("STT_TRIM_TOP_DB", "25"))
 STT_MIN_KEEP_SEC = float(os.environ.get("STT_MIN_KEEP_SEC", "0.4"))
 STT_MIN_CHUNK_SEC = float(os.environ.get("STT_MIN_CHUNK_SEC", "0.35"))
@@ -269,6 +269,26 @@ def _prompt_ids_from_text(prev_text: str | None) -> torch.Tensor | None:
         return None
 
 
+def _effective_max_new_tokens(prompt_ids: torch.Tensor | None) -> int:
+    """Whisper: len(decoder_prefix) + max_new_tokens <= max_target_positions (448 on small)."""
+    max_pos = int(getattr(speech_to_text_model.config, "max_target_positions", 448) or 448)
+    # Zorunlu decoder öneki: start + language + task + notimestamps
+    prefix_tokens = 4
+    if prompt_ids is not None:
+        prefix_tokens += int(prompt_ids.shape[-1])
+    budget = max_pos - prefix_tokens
+    effective = min(STT_MAX_NEW_TOKENS, budget)
+    if effective < STT_MAX_NEW_TOKENS:
+        _log.debug(
+            "stt max_new_tokens capped %s -> %s (prefix_tokens=%s max_pos=%s)",
+            STT_MAX_NEW_TOKENS,
+            effective,
+            prefix_tokens,
+            max_pos,
+        )
+    return max(32, effective)
+
+
 def _transcribe_chunk(
     chunk: np.ndarray,
     sample_rate: int,
@@ -285,7 +305,6 @@ def _transcribe_chunk(
     gen_kw: dict = {
         "input_features": features,
         "task": "transcribe",
-        "max_new_tokens": STT_MAX_NEW_TOKENS,
         "num_beams": STT_NUM_BEAMS,
         "do_sample": False,
     }
@@ -295,6 +314,8 @@ def _transcribe_chunk(
     prompt_ids = _prompt_ids_from_text(prev_text)
     if prompt_ids is not None:
         gen_kw["prompt_ids"] = prompt_ids
+
+    gen_kw["max_new_tokens"] = _effective_max_new_tokens(prompt_ids)
 
     with torch.no_grad():
         generated_ids = speech_to_text_model.generate(**gen_kw)

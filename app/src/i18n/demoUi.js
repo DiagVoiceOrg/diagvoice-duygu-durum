@@ -166,6 +166,9 @@ const TR = {
   mdFusionExtrasHint:
     'Metin duyarlığı ve ses duygusu kartları birlikte seçiliyken birleştirilir; valence/güven alanları buna bağlıdır.',
   unifiedEmotionTitle: 'Birleşik emosyon',
+  unifiedEmotionProfileNeed:
+    'Birleşik emosyon için profilde sentiment (Metin Duygusu) ve audio_emotion (Ses Emosyonu) kartları da gerekli.',
+  unifiedEmotionFusionFail: 'Birleşik emosyon şu an hesaplanamadı. Lütfen tekrar deneyin.',
   agreementBadge: 'Uyum',
   agreementHigh: 'Yüksek',
   agreementMedium: 'Orta',
@@ -321,6 +324,9 @@ const EN = {
   mdFusionExtrasHint:
     'Valence/confidence fusion is computed when both text sentiment and speech emotion cards are enabled.',
   unifiedEmotionTitle: 'Unified emotion',
+  unifiedEmotionProfileNeed:
+    'Unified emotion requires both sentiment (text) and audio_emotion cards in the profile.',
+  unifiedEmotionFusionFail: 'Unified emotion could not be computed. Please try again.',
   agreementBadge: 'Agreement',
   agreementHigh: 'High',
   agreementMedium: 'Medium',
@@ -476,6 +482,9 @@ const AR = {
   mdFusionExtrasHint:
     'تُحسب القيم الموحدة عند تفعيل بطاقتي مشاعر النص ومشاعر الصوت معًا.',
   unifiedEmotionTitle: 'المشاعر الموحدة',
+  unifiedEmotionProfileNeed:
+    'المشاعر الموحدة تتطلب بطاقتي sentiment (مشاعر النص) و audio_emotion (مشاعر الصوت) في الملف.',
+  unifiedEmotionFusionFail: 'تعذر حساب المشاعر الموحدة. يرجى المحاولة مرة أخرى.',
   agreementBadge: 'التوافق',
   agreementHigh: 'مرتفع',
   agreementMedium: 'متوسط',
