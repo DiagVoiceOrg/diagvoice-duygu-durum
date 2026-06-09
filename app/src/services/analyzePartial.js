@@ -88,6 +88,76 @@ async function postEmotionFusion(textSentiment, audio) {
   return data;
 }
 
+function normalizeTextSentiment(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = { ...raw };
+  if (out.sentiment == null && out.label != null) {
+    out.sentiment = out.label;
+  }
+  return out;
+}
+
+function canRunEmotionFusion(wantsUnifiedFusion, textSentiment, audio, textErr, audioErr) {
+  return (
+    wantsUnifiedFusion &&
+    textSentiment &&
+    typeof textSentiment.score === 'number' &&
+    audio &&
+    Array.isArray(audio.probs) &&
+    audio.probs.length >= 4 &&
+    !textErr &&
+    !audioErr
+  );
+}
+
+/** Profilde unified_emotion kartı varsa POST /analyze-emotion-fusion ile doldurur. */
+async function enrichWithUnifiedFusion(result, wantsUnifiedFusion, profileOrder) {
+  if (!wantsUnifiedFusion) return result;
+
+  if (!profileOrder.includes('sentiment') || !profileOrder.includes('audio_emotion')) {
+    return {
+      ...result,
+      unified_emotion_error:
+        'Birleşik emosyon için profilde sentiment (Metin Duygusu) ve audio_emotion (Ses Emosyonu) kartları da gerekli.',
+    };
+  }
+
+  const textSentiment = normalizeTextSentiment(result.text_sentiment);
+  const audio = result.audio;
+  const textErr = result.text_sentiment_error;
+  const audioErr = result.audio_error;
+
+  if (!canRunEmotionFusion(wantsUnifiedFusion, textSentiment, audio, textErr, audioErr)) {
+    return {
+      ...result,
+      unified_emotion: null,
+      unified_emotion_error: null,
+    };
+  }
+
+  // Birleşik emosyon yalnızca POST /analyze-emotion-fusion ile gelir; analyze-fused alanı kullanılmaz.
+  try {
+    const fusion = await postEmotionFusion(textSentiment, audio);
+    return {
+      ...result,
+      text_sentiment: textSentiment ?? result.text_sentiment,
+      valence_text: fusion.valence_text ?? null,
+      valence_audio: fusion.valence_audio ?? null,
+      confidence: fusion.confidence ?? null,
+      fused: fusion.fused ?? null,
+      unified_emotion: fusion.unified_emotion ?? null,
+      unified_emotion_error: null,
+    };
+  } catch (e) {
+    const msg = e.response?.data ? JSON.stringify(e.response.data) : e.message || 'Emotion fusion hatası';
+    console.warn('POST /analyze-emotion-fusion failed:', msg);
+    return {
+      ...result,
+      unified_emotion_error: msg,
+    };
+  }
+}
+
 const KNOWN_CARD_IDS = new Set(CARD_IDS);
 
 /** Profildeki tüm bilinen kartlar varsa tek analyze-fused (valence/fusion dahil). */
@@ -120,7 +190,8 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
   const wantsUnifiedFusion = ordered.includes('unified_emotion');
 
   if (uniqueIds.length === 0 || shouldUseAnalyzeFused(uniqueIds)) {
-    return analyzeFused(audioData, sttLang);
+    const result = await analyzeFused(audioData, sttLang);
+    return enrichWithUnifiedFusion(result, wantsUnifiedFusion, ordered);
   }
 
   let sttText = null;
@@ -235,63 +306,33 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
 
   await Promise.all(phase2);
 
-  let textSentimentForResponse = null;
-  if (textResult) {
-    textSentimentForResponse = { ...textResult };
-    if (textSentimentForResponse.sentiment == null && textSentimentForResponse.label != null) {
-      textSentimentForResponse.sentiment = textSentimentForResponse.label;
-    }
-  }
+  let textSentimentForResponse = normalizeTextSentiment(textResult);
 
-  let valenceText = null;
-  let valenceAudio = null;
-  let confidence = null;
-  let fused = null;
-  let unifiedEmotion = null;
-
-  const canFuse =
-    wantsUnifiedFusion &&
-    uniqueIds.includes('sentiment') &&
-    uniqueIds.includes('audio_emotion') &&
-    textSentimentForResponse &&
-    audioResult &&
-    !textErr &&
-    !audioErr;
-
-  if (canFuse) {
-    try {
-      const fusion = await postEmotionFusion(textSentimentForResponse, audioResult);
-      valenceText = fusion.valence_text ?? null;
-      valenceAudio = fusion.valence_audio ?? null;
-      confidence = fusion.confidence ?? null;
-      fused = fusion.fused ?? null;
-      unifiedEmotion = fusion.unified_emotion ?? null;
-    } catch {
-      /* fusion optional; source cards still render */
-    }
-  }
-
-  return {
-    text: sttText,
-    text_error: sttErr,
-    audio: audioResult,
-    audio_error: audioErr,
-    disease: diseaseResult,
-    disease_error: diseaseErr,
-    mental_fitness: mentalFitnessResult,
-    mental_fitness_error: mentalFitnessErr,
-    age_gender: null,
-    age_gender_error: null,
-    depression: depressionResult,
-    depression_error: depressionErr,
-    benchmark_v2: benchmarkV2Result,
-    benchmark_v2_error: benchmarkV2Err,
-    text_sentiment: textSentimentForResponse,
-    text_sentiment_error: textErr,
-    valence_text: valenceText,
-    valence_audio: valenceAudio,
-    confidence,
-    fused,
-    unified_emotion: unifiedEmotion,
-  };
+  return enrichWithUnifiedFusion(
+    {
+      text: sttText,
+      text_error: sttErr,
+      audio: audioResult,
+      audio_error: audioErr,
+      disease: diseaseResult,
+      disease_error: diseaseErr,
+      mental_fitness: mentalFitnessResult,
+      mental_fitness_error: mentalFitnessErr,
+      age_gender: null,
+      age_gender_error: null,
+      depression: depressionResult,
+      depression_error: depressionErr,
+      benchmark_v2: benchmarkV2Result,
+      benchmark_v2_error: benchmarkV2Err,
+      text_sentiment: textSentimentForResponse,
+      text_sentiment_error: textErr,
+      valence_text: null,
+      valence_audio: null,
+      confidence: null,
+      fused: null,
+      unified_emotion: null,
+    },
+    wantsUnifiedFusion,
+    ordered,
+  );
 }

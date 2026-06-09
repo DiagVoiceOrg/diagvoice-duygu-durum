@@ -96,6 +96,7 @@ export default function DemoHome({
   const [ageGenderError, setAgeGenderError] = useState(null);
   const [valenceResult, setValenceResult] = useState({ text: null, audio: null, fused: null });
   const [unifiedEmotionResult, setUnifiedEmotionResult] = useState(null);
+  const [unifiedEmotionError, setUnifiedEmotionError] = useState(null);
   const [confidenceResult, setConfidenceResult] = useState(null);
   const [benchmarkV2Result, setBenchmarkV2Result] = useState(null);
   const [benchmarkV2Error, setBenchmarkV2Error] = useState(null);
@@ -122,6 +123,7 @@ export default function DemoHome({
     setAgeGenderError(null);
     setValenceResult({ text: null, audio: null, fused: null });
     setUnifiedEmotionResult(null);
+    setUnifiedEmotionError(null);
     setConfidenceResult(null);
     setBenchmarkV2Result(null);
     setBenchmarkV2Error(null);
@@ -182,6 +184,9 @@ export default function DemoHome({
       });
 
       setUnifiedEmotionResult(result.unified_emotion ?? null);
+      setUnifiedEmotionError(
+        typeof result.unified_emotion_error === 'string' ? result.unified_emotion_error : null,
+      );
 
       if (result.confidence) {
         setConfidenceResult(result.confidence);
@@ -250,6 +255,17 @@ export default function DemoHome({
         );
 
       case 'unified_emotion': {
+        if (unifiedEmotionError) {
+          return (
+            <div className="card emotion-card unified-emotion-card" key={cardId}>
+              <CardChrome copy={copy}>
+                <div className="error" style={{ marginTop: 0 }}>
+                  {unifiedEmotionError}
+                </div>
+              </CardChrome>
+            </div>
+          );
+        }
         if (!unifiedEmotionResult?.probs?.length) return null;
         const agreement = unifiedEmotionResult.agreement;
         const agreementColor =
@@ -688,6 +704,7 @@ export default function DemoHome({
             valenceResult={valenceResult}
             confidenceResult={confidenceResult}
             unifiedEmotionResult={unifiedEmotionResult}
+            unifiedEmotionError={unifiedEmotionError}
           />
         )}
       </section>

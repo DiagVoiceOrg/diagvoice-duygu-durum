@@ -134,6 +134,7 @@ export default function ModelDetailsPage({
   valenceResult,
   confidenceResult,
   unifiedEmotionResult = null,
+  unifiedEmotionError = null,
 }) {
   const lang = normalizeDemoLang(demoLang);
 
@@ -280,6 +281,11 @@ export default function ModelDetailsPage({
       }
 
       case 'unified_emotion': {
+        if (unifiedEmotionError) {
+          return (
+            <DetailCard key={cardId} title={copy.displayTitle} warn={unifiedEmotionError} />
+          );
+        }
         if (!unifiedEmotionResult?.probs?.length) {
           return (
             <DetailCard key={cardId} title={copy.displayTitle}>
