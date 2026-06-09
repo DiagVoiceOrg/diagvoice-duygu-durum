@@ -1,10 +1,19 @@
 import { CARD_REGISTRY } from './cardRegistry';
 
-/** Teknik kart kimlikleri — CMS ui_profiles.cards[].id ile eşleşir */
-export const CARD_IDS = CARD_REGISTRY.map((r) => r.id);
+/** analyze-fused / kısmi analizde API çağrısı tetikleyen kartlar (unified_emotion hariç) */
+export const CARD_IDS = CARD_REGISTRY.filter((r) => r.analysisCard !== false).map((r) => r.id);
 
-/** CMS yokken kullanılan sıra ve varsayılan başlıklar */
-export const DEFAULT_CARD_ORDER = [...CARD_IDS];
+/** CMS yokken kullanılan sıra — karşılaştırma için metin → ses → birleşik */
+export const DEFAULT_CARD_ORDER = [
+  'transcript',
+  'sentiment',
+  'audio_emotion',
+  'unified_emotion',
+  'disease',
+  'benchmark_v2',
+  'mental_fitness',
+  'depression',
+];
 
 const FALLBACK_TITLE = Object.fromEntries(CARD_REGISTRY.map((r) => [r.id, r.defaultTitle]));
 

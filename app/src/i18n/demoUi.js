@@ -10,6 +10,14 @@ export const DEMO_LANGS = [
 ];
 
 const STORAGE_KEY = 'diagvoice-demo-lang';
+const SPEECH_LANG_STORAGE_KEY = 'diagvoice-speech-lang';
+
+/** Konuşma dili (STT) — arayüz dilinden bağımsız */
+export const SPEECH_LANGS = [
+  { id: 'tr', label: 'Türkçe' },
+  { id: 'en', label: 'English' },
+  { id: 'ar', label: 'العربية' },
+];
 
 const TR = {
   headerAdmin: 'Admin',
@@ -30,6 +38,10 @@ const TR = {
   recorderPlay: 'Oynat',
   recorderPause: 'Durdur',
   recorderMicDenied: 'Mikrofon erişimi reddedildi veya bir hata oluştu.',
+
+  speechLangTitle: 'Konuşma dili',
+  speechLangHint: 'Whisper bu dilde dinler. Arayüz dili (üst menü) bundan bağımsızdır.',
+  speechLangAria: 'Konuşma dili seçimi',
 
   sampleTitle: 'Örnek sesler',
   sampleHint: 'Bir örnek seçin; aynı alandan dinleyip analizi başlatabilirsiniz.',
@@ -115,7 +127,7 @@ const TR = {
   off: 'Kapalı',
 
   mdEmptyPrompt: 'Bu kart için gösterilecek sonuç yok. Ses analizini başlatın veya profilinizde bu kartı seçin.',
-  mdSttIntro: 'Whisper tabanlı konuştan metne (STT). Dil seçici ile aynı dile zorlanır.',
+  mdSttIntro: 'Whisper tabanlı konuştan metne (STT). Konuşma dili seçicisi ile belirlenir.',
   mdSttErrorTitle: 'STT hatası',
   mdSentPipelineTitle: 'Metin duyarlığı pipeline’ı',
   mdSentProcessingErr: 'Metin duyarlığı hatası',
@@ -153,6 +165,16 @@ const TR = {
   mdFusionExtrasTitle: 'Metin–ses birleştirme (füzyon)',
   mdFusionExtrasHint:
     'Metin duyarlığı ve ses duygusu kartları birlikte seçiliyken birleştirilir; valence/güven alanları buna bağlıdır.',
+  unifiedEmotionTitle: 'Birleşik emosyon',
+  agreementBadge: 'Uyum',
+  agreementHigh: 'Yüksek',
+  agreementMedium: 'Orta',
+  agreementLow: 'Düşük',
+  mdUnifiedIntro: 'Metin duygusu ile ses emosyonunun 4-sınıf olasılık birleşimi',
+  mdUnifiedFused: 'Birleşik dağılım',
+  mdUnifiedTextSrc: 'Metin kaynağı',
+  mdUnifiedAudioSrc: 'Ses kaynağı',
+  mdUnifiedAgreement: 'Kaynak uyumu',
 };
 
 const EN = {
@@ -174,6 +196,10 @@ const EN = {
   recorderPlay: 'Play',
   recorderPause: 'Pause',
   recorderMicDenied: 'Microphone access was denied or an error occurred.',
+
+  speechLangTitle: 'Speech language',
+  speechLangHint: 'Whisper listens in this language. Independent from the UI language above.',
+  speechLangAria: 'Speech language selection',
 
   sampleTitle: 'Sample audio',
   sampleHint: 'Pick a sample; listen here and run analysis.',
@@ -256,7 +282,7 @@ const EN = {
   off: 'Off',
 
   mdEmptyPrompt: 'No result for this card yet. Run an audio analysis or add it in your profile.',
-  mdSttIntro: 'Whisper speech-to-text. Language matches the demo language picker.',
+  mdSttIntro: 'Whisper speech-to-text. Uses the speech language selector below the header.',
   mdSttErrorTitle: 'Speech-to-text error',
   mdSentPipelineTitle: 'Text sentiment pipeline',
   mdSentProcessingErr: 'Text sentiment error',
@@ -294,6 +320,16 @@ const EN = {
   mdFusionExtrasTitle: 'Text–speech fusion panel',
   mdFusionExtrasHint:
     'Valence/confidence fusion is computed when both text sentiment and speech emotion cards are enabled.',
+  unifiedEmotionTitle: 'Unified emotion',
+  agreementBadge: 'Agreement',
+  agreementHigh: 'High',
+  agreementMedium: 'Medium',
+  agreementLow: 'Low',
+  mdUnifiedIntro: '4-class probability fusion of text sentiment and speech emotion',
+  mdUnifiedFused: 'Fused distribution',
+  mdUnifiedTextSrc: 'Text source',
+  mdUnifiedAudioSrc: 'Speech source',
+  mdUnifiedAgreement: 'Source agreement',
 };
 
 const AR = {
@@ -315,6 +351,10 @@ const AR = {
   recorderPlay: 'تشغيل',
   recorderPause: 'إيقاف مؤقت',
   recorderMicDenied: 'تم رفض الوصول إلى الميكروفون أو حدث خطأ.',
+
+  speechLangTitle: 'لغة الكلام',
+  speechLangHint: 'Whisper يستمع بهذه اللغة. مستقل عن لغة الواجهة في الأعلى.',
+  speechLangAria: 'اختيار لغة الكلام',
 
   sampleTitle: 'عينات صوتية',
   sampleHint: 'اختر عينة؛ استمع وابدأ التحليل من هنا.',
@@ -397,7 +437,7 @@ const AR = {
   off: 'معطّل',
 
   mdEmptyPrompt: 'لا يوجد نتيجة لهذه البطاقة بعد. شغّل التحليل أو فعّل البطاقة في ملف البروفيل.',
-  mdSttIntro: 'تحويل الكلام إلى نص بواسطة Whisper. اللغة تتبع اختيار الواجهة.',
+  mdSttIntro: 'تحويل الكلام إلى نص بواسطة Whisper. يحددها محدّد لغة الكلام.',
   mdSttErrorTitle: 'خطأ في التعرّف على الكلام',
   mdSentPipelineTitle: 'سلسلة تحليل مشاعر النص',
   mdSentProcessingErr: 'خطأ في تحليل مشاعر النص',
@@ -435,6 +475,16 @@ const AR = {
   mdFusionExtrasTitle: 'لوحة دمج النص مع الصوت',
   mdFusionExtrasHint:
     'تُحسب القيم الموحدة عند تفعيل بطاقتي مشاعر النص ومشاعر الصوت معًا.',
+  unifiedEmotionTitle: 'المشاعر الموحدة',
+  agreementBadge: 'التوافق',
+  agreementHigh: 'مرتفع',
+  agreementMedium: 'متوسط',
+  agreementLow: 'منخفض',
+  mdUnifiedIntro: 'دمج احتمالات ٤ فئات لمشاعر النص والصوت',
+  mdUnifiedFused: 'التوزيع الموحد',
+  mdUnifiedTextSrc: 'مصدر النص',
+  mdUnifiedAudioSrc: 'مصدر الصوت',
+  mdUnifiedAgreement: 'توافق المصدرين',
 };
 
 const LOCALES = /** @type {Record<DemoLang, typeof TR>} */ ({
@@ -484,6 +534,30 @@ export function writeStoredDemoLang(lang) {
   }
 }
 
+/** @returns {'tr'|'en'|'ar'} */
+export function normalizeSpeechLang(v) {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (s === 'en' || s === 'ar') return s;
+  return 'tr';
+}
+
+export function readStoredSpeechLang() {
+  try {
+    return normalizeSpeechLang(localStorage.getItem(SPEECH_LANG_STORAGE_KEY) || '');
+  } catch {
+    return 'tr';
+  }
+}
+
+/** @param {'tr'|'en'|'ar'} lang */
+export function writeStoredSpeechLang(lang) {
+  try {
+    localStorage.setItem(SPEECH_LANG_STORAGE_KEY, normalizeSpeechLang(lang));
+  } catch {
+    /* ignore */
+  }
+}
+
 /** @param {DemoLang} lang */
 export function syncDocumentDemoLang(lang) {
   const L = normalizeDemoLang(lang);
@@ -505,6 +579,16 @@ export function emotionUiLabel(lang, predLabel) {
     fearful: L.emotionFearfulAlt,
   };
   return m[predLabel] || predLabel;
+}
+
+export function agreementUiLabel(lang, level) {
+  const L = LOCALES[normalizeDemoLang(lang)];
+  const m = {
+    high: L.agreementHigh,
+    medium: L.agreementMedium,
+    low: L.agreementLow,
+  };
+  return m[level] || level || '—';
 }
 
 export function depressionRiskUiLabel(lang, riskKey) {

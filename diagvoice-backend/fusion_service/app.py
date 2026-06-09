@@ -24,9 +24,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from fusion_service.emotion_fusion import (
+    DEFAULT_AUDIO_VALENCE_WEIGHTS,
+    build_emotion_fusion_payload,
+    load_fusion_config_from_env,
+)
 from fusion_service.openapi_tags import OPENAPI_TAGS, PROXY_JSON_RESPONSES
 from fusion_service.schemas import (
     AnalyzeFusedResponse,
+    EmotionFusionRequest,
+    EmotionFusionResponse,
     ServiceInfoResponse,
     TextSentimentRequest,
     ToggAnalyzeResponse,
@@ -321,142 +328,12 @@ if not _log.handlers:
     _log.addHandler(_h)
     _log.propagate = False
 
-FUSION_W_TEXT = float(os.environ.get("FUSION_W_TEXT", "0.5"))
-FUSION_W_TEXT = max(0.0, min(1.0, FUSION_W_TEXT))
-
-DYNAMIC_FUSION = os.environ.get("DYNAMIC_FUSION", "1").strip() not in {"0", "false", "False"}
-
-# Clamp range for dynamic w_text
-W_TEXT_MIN = float(os.environ.get("W_TEXT_MIN", "0.2"))
-W_TEXT_MAX = float(os.environ.get("W_TEXT_MAX", "0.8"))
-W_TEXT_MIN = max(0.0, min(1.0, W_TEXT_MIN))
-W_TEXT_MAX = max(0.0, min(1.0, W_TEXT_MAX))
-if W_TEXT_MIN > W_TEXT_MAX:
-    W_TEXT_MIN, W_TEXT_MAX = W_TEXT_MAX, W_TEXT_MIN
-
-# Audio emotion class order based on your training script:
-# 0 sadness, 1 fear, 2 happiness, 3 anger
-#
-# Convert to valence (0..1) using a weighted sum of probabilities:
-#   v_raw = sum(p_i * w_i) where w_i in [-1..1]
-#   valence = (v_raw + 1) / 2
-# and then modulate by intensity (0..1) to reduce impact when the model is unsure:
-#   valence = 0.5 + intensity * (v_raw / 2)
-DEFAULT_AUDIO_VALENCE_WEIGHTS = [-1.0, -0.6, 1.0, -0.8]
-
-
-def _load_audio_valence_weights() -> list[float]:
-    raw = os.environ.get("AUDIO_VALENCE_WEIGHTS", "")
-    if not raw.strip():
-        return DEFAULT_AUDIO_VALENCE_WEIGHTS
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if len(parts) != 4:
-        return DEFAULT_AUDIO_VALENCE_WEIGHTS
-    try:
-        ws = [float(p) for p in parts]
-        if any(w < -1.0 or w > 1.0 for w in ws):
-            return DEFAULT_AUDIO_VALENCE_WEIGHTS
-        return ws
-    except Exception:
-        return DEFAULT_AUDIO_VALENCE_WEIGHTS
-
-
-AUDIO_VALENCE_WEIGHTS = _load_audio_valence_weights()
-
-
-def text_sentiment_to_valence(sentiment_label: str, score: float) -> float:
-    lab = (sentiment_label or "").upper()
-    s = float(score)
-    if lab == "POSITIVE":
-        v = s
-    elif lab == "NEGATIVE":
-        v = 1.0 - s
-    else:
-        # Unknown label; fall back to neutral-ish
-        v = 0.5
-    return max(0.0, min(1.0, v))
-
-
-def text_valence_confidence(valence: Optional[float]) -> Optional[float]:
-    if valence is None:
-        return None
-    # distance to 0.5 mapped to [0..1]
-    v = float(valence)
-    conf = min(1.0, max(0.0, abs(v - 0.5) * 2.0))
-    return conf
-
-
-def audio_entropy_confidence(probs: Any) -> Optional[float]:
-    if not isinstance(probs, list) or len(probs) < 4:
-        return None
-    try:
-        p = [max(1e-12, float(x)) for x in probs[:4]]
-        s = sum(p)
-        p = [x / s for x in p]
-        ent = -sum(x * math.log(x) for x in p)
-        ent_max = math.log(4.0)
-        ent_norm = ent / ent_max
-        # confidence is inverse entropy
-        conf = 1.0 - ent_norm
-        return max(0.0, min(1.0, conf))
-    except Exception:
-        return None
-
-
-def audio_overall_confidence(intensity: Optional[float], probs: Any) -> Optional[float]:
-    ent_conf = audio_entropy_confidence(probs)
-    if intensity is None and ent_conf is None:
-        return None
-    inten = None
-    if intensity is not None:
-        inten = max(0.0, min(1.0, float(intensity)))
-
-    if inten is None:
-        return ent_conf
-    if ent_conf is None:
-        return inten
-
-    # intensity says how strong emotion is; entropy says how peaked distribution is
-    return max(0.0, min(1.0, 0.5 * inten + 0.5 * ent_conf))
-
-
-def audio_probs_to_valence(probs: Any, intensity: Optional[float] = None) -> Optional[float]:
-    if not isinstance(probs, list) or len(probs) < 4:
-        return None
-
-    try:
-        p = [float(x) for x in probs[:4]]
-        v_raw = sum(pi * wi for pi, wi in zip(p, AUDIO_VALENCE_WEIGHTS))
-        v_raw = max(-1.0, min(1.0, v_raw))
-
-        if intensity is None:
-            v = (v_raw + 1.0) / 2.0
-        else:
-            inten = float(intensity)
-            inten = max(0.0, min(1.0, inten))
-            v = 0.5 + inten * (v_raw / 2.0)
-
-        return max(0.0, min(1.0, float(v)))
-    except Exception:
-        return None
-
-
-def fuse(valence_text: Optional[float], valence_audio: Optional[float], w_text: float) -> Dict[str, Any]:
-    if valence_text is None and valence_audio is None:
-        return {"valence": None, "label": None, "w_text": w_text}
-
-    if valence_text is None:
-        v = valence_audio
-        w = 0.0
-    elif valence_audio is None:
-        v = valence_text
-        w = 1.0
-    else:
-        w = w_text
-        v = w * valence_text + (1.0 - w) * valence_audio
-
-    label = "POSITIVE" if v is not None and v >= 0.5 else "NEGATIVE"
-    return {"valence": v, "label": label, "w_text": w}
+_FUSION_CFG = load_fusion_config_from_env()
+FUSION_W_TEXT = _FUSION_CFG.w_text
+DYNAMIC_FUSION = _FUSION_CFG.dynamic_fusion
+W_TEXT_MIN = _FUSION_CFG.w_text_min
+W_TEXT_MAX = _FUSION_CFG.w_text_max
+AUDIO_VALENCE_WEIGHTS = list(_FUSION_CFG.audio_valence_weights)
 
 
 def _build_timeout() -> httpx.Timeout:
@@ -953,6 +830,9 @@ async def root():
                 if TURKISH_PSYCH_CLASSIFIER_URL
                 else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
             ),
+            "emotion_fusion": (
+                "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion"
+            ),
             "wellness_companion_chat": (
                 "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); "
                 "OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
@@ -1019,6 +899,29 @@ async def proxy_analyze_voice_to_text(
 )
 async def proxy_analyze_text_sentiment(request: Request, body: TextSentimentRequest):
     return await _proxy_json(request, TEXT_TO_SENTIMENT_URL, {"text": body.text.strip()}, proxy_name="analyze-text-sentiment")
+
+
+@app.post(
+    "/analyze-emotion-fusion",
+    response_model=EmotionFusionResponse,
+    tags=["analysis"],
+    summary="Metin + ses emosyon birleşimi (4 sınıf)",
+)
+async def analyze_emotion_fusion(request: Request, body: EmotionFusionRequest):
+    """
+    Metin duygu ve ses emosyonu sonuçlarını ortak 4-sınıf uzayında birleştirir.
+    Kısmi profiller veya harici istemciler için; tam analiz `/analyze-fused` içinde de üretilir.
+    """
+    text_payload = body.text_sentiment.model_dump() if body.text_sentiment else None
+    audio_payload = body.audio.model_dump() if body.audio else None
+    fusion = build_emotion_fusion_payload(text_payload, audio_payload, _FUSION_CFG)
+    request.state.audit_details = {
+        "route": "analyze-emotion-fusion",
+        "has_text": text_payload is not None,
+        "has_audio": audio_payload is not None,
+        "unified_pred": (fusion.get("unified_emotion") or {}).get("pred_label"),
+    }
+    return fusion
 
 
 @app.post(
@@ -1497,48 +1400,24 @@ async def analyze_fused(
         else:
             _log.info("analyze_fused benchmark_v2 skipped (INFERENCE_API_URL empty)")
 
-        # Normalize to valence [0,1]
-        # text_result: "sentiment" veya "label" (model formatına göre)
-        valence_text = None
-        if text_result and "score" in text_result:
-            sentiment_label = text_result.get("sentiment") or text_result.get("label")
-            if sentiment_label is not None:
-                valence_text = text_sentiment_to_valence(sentiment_label, text_result.get("score"))
-
-        # FE uyumu: text_sentiment'ta "sentiment" anahtarı olsun (bazı modeller "label" döner)
+        # Normalize to valence [0,1] and 4-class unified emotion
         text_sentiment_for_response = None
         if text_result:
             text_sentiment_for_response = dict(text_result)
             if "sentiment" not in text_sentiment_for_response and "label" in text_sentiment_for_response:
                 text_sentiment_for_response["sentiment"] = text_sentiment_for_response["label"]
 
-        valence_audio = None
-        if audio_result and "probs" in audio_result:
-            valence_audio = audio_probs_to_valence(audio_result.get("probs"), audio_result.get("intensity"))
-
-        # Dynamic weighting
-        text_conf = text_valence_confidence(valence_text)
-        audio_conf = audio_overall_confidence(
-            audio_result.get("intensity") if isinstance(audio_result, dict) else None,
-            audio_result.get("probs") if isinstance(audio_result, dict) else None,
-        )
-
-        w_text_used = FUSION_W_TEXT
-        if DYNAMIC_FUSION and valence_text is not None and valence_audio is not None and text_conf is not None and audio_conf is not None:
-            # Higher confidence -> higher weight.
-            # Map relative confidence to [W_TEXT_MIN..W_TEXT_MAX]
-            ratio = text_conf / (text_conf + audio_conf + 1e-9)
-            w_text_used = W_TEXT_MIN + (W_TEXT_MAX - W_TEXT_MIN) * ratio
-
-        disagreement = None
-        if valence_text is not None and valence_audio is not None:
-            disagreement = abs(float(valence_text) - float(valence_audio))
-
-        fused = fuse(valence_text, valence_audio, w_text_used)
+        fusion_payload = build_emotion_fusion_payload(text_result, audio_result, _FUSION_CFG)
+        valence_text = fusion_payload.get("valence_text")
+        valence_audio = fusion_payload.get("valence_audio")
+        fused = fusion_payload.get("fused")
+        confidence = fusion_payload.get("confidence")
+        unified_emotion = fusion_payload.get("unified_emotion")
         _log.info(
-            "analyze_fused response_ready stt_ok=%s transcript_len=%d",
+            "analyze_fused response_ready stt_ok=%s transcript_len=%d unified=%s",
             stt_err is None,
             len((stt_text or "").strip()),
+            (unified_emotion or {}).get("pred_label") if isinstance(unified_emotion, dict) else None,
         )
 
         from cms.usage_audit import redact_fused_details
@@ -1562,13 +1441,9 @@ async def analyze_fused(
             "text_sentiment_error": text_err,
             "valence_text": valence_text,
             "valence_audio": valence_audio,
-            "confidence": {
-                "text": text_conf,
-                "audio": audio_conf,
-                "disagreement": disagreement,
-                "dynamic_fusion": DYNAMIC_FUSION,
-            },
+            "confidence": confidence,
             "fused": fused,
+            "unified_emotion": unified_emotion,
         }
         request.state.audit_details = {
             "route": "analyze-fused",

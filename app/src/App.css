@@ -100,6 +100,34 @@
   box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.15);
 }
 
+.speech-lang-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.15rem;
+}
+
+.speech-lang-copy {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.speech-lang-copy strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.speech-lang-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .app-header-controls .admin-link {
   position: static;
 }

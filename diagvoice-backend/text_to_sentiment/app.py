@@ -56,11 +56,15 @@ class SentimentRequest(BaseModel):
 
 
 def text_to_valence(label: str, score: float) -> float:
-    lab = str(label).upper()
+    lab = str(label).strip().upper()
     s = float(score)
-    if lab == "POSITIVE":
-        return s
-    return 1.0 - s
+    if lab in {"POSITIVE", "POS"}:
+        return max(0.0, min(1.0, s))
+    if lab in {"NEGATIVE", "NEG"}:
+        return max(0.0, min(1.0, 1.0 - s))
+    if lab in {"NOTR", "NEUTRAL", "NÖTR"}:
+        return 0.5
+    return max(0.0, min(1.0, 1.0 - s))
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -40,6 +40,40 @@ class FusedConfidenceOut(BaseModel):
     dynamic_fusion: bool | None = None
 
 
+class EmotionFusionTextInput(BaseModel):
+    sentiment: str | None = Field(None, description="POSITIVE/Negative/Notr vb.")
+    label: str | None = Field(None, description="Alternatif etiket alanı")
+    score: float = Field(..., ge=0.0, le=1.0)
+
+
+class EmotionFusionAudioInput(BaseModel):
+    probs: list[float] = Field(..., min_length=4, max_length=4)
+    intensity: float | None = Field(None, ge=0.0, le=1.0)
+    pred_label: str | None = None
+    pred_id: int | None = None
+
+
+class EmotionFusionRequest(BaseModel):
+    text_sentiment: EmotionFusionTextInput | None = None
+    audio: EmotionFusionAudioInput | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_modality(self) -> "EmotionFusionRequest":
+        if self.text_sentiment is None and self.audio is None:
+            raise ValueError("text_sentiment veya audio gerekli.")
+        return self
+
+
+class EmotionFusionResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    unified_emotion: dict[str, Any] | None = None
+    valence_text: float | None = Field(None, ge=0.0, le=1.0)
+    valence_audio: float | None = Field(None, ge=0.0, le=1.0)
+    confidence: FusedConfidenceOut | None = None
+    fused: FusedValenceOut | None = None
+
+
 class AnalyzeFusedResponse(BaseModel):
     """POST /analyze-fused birleşik yanıt şeması. Alt model alanları servise göre değişebilir."""
 
@@ -65,6 +99,10 @@ class AnalyzeFusedResponse(BaseModel):
     valence_audio: float | None = Field(None, ge=0.0, le=1.0)
     confidence: FusedConfidenceOut | None = None
     fused: FusedValenceOut | None = None
+    unified_emotion: dict[str, Any] | None = Field(
+        None,
+        description="Metin+ses 4-sınıf birleşik emosyon (sadness/fear/happiness/anger)",
+    )
 
 
 class ToggAnalyzeResponse(BaseModel):

@@ -13,9 +13,13 @@ import { mergeCardCopy, resolveCardOrder } from '../lib/cardCopy';
 import {
   DEMO_LANGS,
   demoT,
+  agreementUiLabel,
   depressionRiskUiLabel,
   emotionUiLabel,
   normalizeDemoLang,
+  readStoredSpeechLang,
+  SPEECH_LANGS,
+  writeStoredSpeechLang,
 } from '../i18n/demoUi';
 
 function ProbBar({ label, value, color }) {
@@ -51,6 +55,8 @@ function getEmotionColor(pred_label) {
 
 const BENCHMARK_POSITIVE_UI_THRESHOLD = 0.5;
 
+const EMOTION_ORDER = ['sadness', 'fear', 'happiness', 'anger'];
+
 const DEPRESSION_RISK_COLOR = { dusuk: '#10b981', orta: '#f59e0b', yuksek: '#ef4444' };
 
 /** CMS’deki slug → React Router path (tek segment). */
@@ -71,6 +77,13 @@ export default function DemoHome({
   onDemoLangChange = () => {},
 }) {
   const lang = normalizeDemoLang(demoLang);
+  const [speechLang, setSpeechLangState] = useState(() => readStoredSpeechLang());
+
+  const setSpeechLang = (code) => {
+    const n = code === 'en' || code === 'ar' ? code : 'tr';
+    writeStoredSpeechLang(n);
+    setSpeechLangState(n);
+  };
 
   const [isLoading, setIsLoading] = useState(false);
   const [transcribedText, setTranscribedText] = useState('');
@@ -82,6 +95,7 @@ export default function DemoHome({
   const [ageGenderResult, setAgeGenderResult] = useState(null);
   const [ageGenderError, setAgeGenderError] = useState(null);
   const [valenceResult, setValenceResult] = useState({ text: null, audio: null, fused: null });
+  const [unifiedEmotionResult, setUnifiedEmotionResult] = useState(null);
   const [confidenceResult, setConfidenceResult] = useState(null);
   const [benchmarkV2Result, setBenchmarkV2Result] = useState(null);
   const [benchmarkV2Error, setBenchmarkV2Error] = useState(null);
@@ -107,6 +121,7 @@ export default function DemoHome({
     setAgeGenderResult(null);
     setAgeGenderError(null);
     setValenceResult({ text: null, audio: null, fused: null });
+    setUnifiedEmotionResult(null);
     setConfidenceResult(null);
     setBenchmarkV2Result(null);
     setBenchmarkV2Error(null);
@@ -119,7 +134,7 @@ export default function DemoHome({
     setCurrentAnalysisSource(sourceName);
 
     try {
-      const result = await analyzeByProfileCards(audioBlob, profileCards, lang);
+      const result = await analyzeByProfileCards(audioBlob, profileCards, speechLang);
       setTranscribedText(result.text || '');
       setTextSttError(typeof result.text_error === 'string' ? result.text_error : null);
       setSentimentPipelineError(typeof result.text_sentiment_error === 'string' ? result.text_sentiment_error : null);
@@ -165,6 +180,8 @@ export default function DemoHome({
         audio: result.valence_audio ?? null,
         fused: result.fused ?? null,
       });
+
+      setUnifiedEmotionResult(result.unified_emotion ?? null);
 
       if (result.confidence) {
         setConfidenceResult(result.confidence);
@@ -231,6 +248,50 @@ export default function DemoHome({
             </CardChrome>
           </div>
         );
+
+      case 'unified_emotion': {
+        if (!unifiedEmotionResult?.probs?.length) return null;
+        const agreement = unifiedEmotionResult.agreement;
+        const agreementColor =
+          agreement === 'high' ? '#10b981' : agreement === 'medium' ? '#f59e0b' : '#ef4444';
+        return (
+          <div className="card emotion-card unified-emotion-card" key={cardId}>
+            <CardChrome
+              copy={copy}
+              indicator={
+                <div
+                  className="emotion-indicator"
+                  style={{ backgroundColor: getEmotionColor(unifiedEmotionResult.pred_label) }}
+                />
+              }
+            >
+              <div className="main-result">
+                <span
+                  className="result-highlight"
+                  style={{ color: getEmotionColor(unifiedEmotionResult.pred_label) }}
+                >
+                  {emotionUiLabel(lang, unifiedEmotionResult.pred_label)}
+                </span>
+                {agreement ? (
+                  <span className="confidence-badge" style={{ borderColor: agreementColor, color: agreementColor }}>
+                    {demoT(lang, 'agreementBadge')}: {agreementUiLabel(lang, agreement)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="prob-section compact">
+                {EMOTION_ORDER.map((key, idx) => (
+                  <ProbBar
+                    key={key}
+                    label={emotionUiLabel(lang, key)}
+                    value={unifiedEmotionResult.probs[idx] || 0}
+                    color={getEmotionColor(key)}
+                  />
+                ))}
+              </div>
+            </CardChrome>
+          </div>
+        );
+      }
 
       case 'disease':
         if (!diseaseResult) return null;
@@ -513,6 +574,30 @@ export default function DemoHome({
       {cmsWarning ? <div className="cms-banner">{cmsWarning}</div> : null}
       {pageError ? <div className="error demo-page-error">{pageError}</div> : null}
 
+      <div className="speech-lang-bar card">
+        <div className="speech-lang-copy">
+          <strong>{demoT(lang, 'speechLangTitle')}</strong>
+          <p className="speech-lang-hint">{demoT(lang, 'speechLangHint')}</p>
+        </div>
+        <div className="lang-switch" role="group" aria-label={demoT(lang, 'speechLangAria')}>
+          {SPEECH_LANGS.map((L) => (
+            <button
+              key={L.id}
+              type="button"
+              className={`lang-pill-btn${L.id === 'ar' ? ' lang-pill-btn--arabic' : ''}${
+                speechLang === L.id ? ' is-active' : ''
+              }`}
+              lang={L.id === 'tr' ? 'tr' : L.id === 'ar' ? 'ar' : 'en'}
+              onClick={() => setSpeechLang(L.id)}
+              aria-pressed={speechLang === L.id}
+              disabled={!!pageError || isLoading}
+            >
+              {L.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="page-tabs">
         <button
           className={`tab-button ${activePage === 'summary' ? 'active' : 'secondary'}`}
@@ -602,6 +687,7 @@ export default function DemoHome({
             ageGenderError={ageGenderError}
             valenceResult={valenceResult}
             confidenceResult={confidenceResult}
+            unifiedEmotionResult={unifiedEmotionResult}
           />
         )}
       </section>

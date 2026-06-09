@@ -57,6 +57,35 @@ def _json_size(obj: Any) -> int:
         return 0
 
 
+def _slim_emotion_probs(probs: list) -> list:
+    out = []
+    for x in (probs or [])[:4]:
+        try:
+            out.append(round(float(x), 3))
+        except (TypeError, ValueError):
+            out.append(x)
+    return out
+
+
+def _slim_unified_emotion(ue: dict[str, Any]) -> dict[str, Any]:
+    slim = {k: v for k, v in ue.items() if k not in ("probs", "sources")}
+    if isinstance(ue.get("probs"), list):
+        slim["probs"] = _slim_emotion_probs(ue["probs"])
+    sources = ue.get("sources")
+    if isinstance(sources, dict):
+        src_out: dict[str, Any] = {}
+        for sk, sv in sources.items():
+            if isinstance(sv, dict):
+                row = {kk: sv[kk] for kk in sv if kk != "probs"}
+                if isinstance(sv.get("probs"), list):
+                    row["probs"] = _slim_emotion_probs(sv["probs"])
+                src_out[sk] = row
+            else:
+                src_out[sk] = sv
+        slim["sources"] = src_out
+    return slim
+
+
 def redact_fused_details(body: dict[str, Any]) -> dict[str, Any]:
     """STT metnini varsayılan olarak kısalt; AUDIT_LOG_INCLUDE_TRANSCRIPT=1 ile tam metin."""
     out: dict[str, Any] = {}
@@ -65,6 +94,9 @@ def redact_fused_details(body: dict[str, Any]) -> dict[str, Any]:
             t = v.strip()
             out["text_preview"] = (t[:200] + "…") if len(t) > 200 else t
             out["text_len"] = len(t)
+            continue
+        if k == "unified_emotion" and isinstance(v, dict):
+            out[k] = _slim_unified_emotion(v)
             continue
         if isinstance(v, dict) and _json_size(v) > 12000:
             out[k] = {"_truncated": True, "keys": list(v.keys())[:50]}

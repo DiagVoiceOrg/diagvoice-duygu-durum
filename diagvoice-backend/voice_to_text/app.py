@@ -2,6 +2,7 @@ import contextlib
 import io
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -18,7 +19,7 @@ from pydub import AudioSegment
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
-app = fastapi.FastAPI() 
+app = fastapi.FastAPI()
 
 _cors_origins_raw = os.environ.get(
     "CORS_ALLOW_ORIGINS",
@@ -34,10 +35,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STT_CHUNK_SEC = float(os.environ.get("STT_CHUNK_SEC", "25"))
+STT_CHUNK_SEC = float(os.environ.get("STT_CHUNK_SEC", "30"))
 STT_CHUNK_SEC = max(5.0, min(120.0, STT_CHUNK_SEC))
-STT_NUM_BEAMS = max(1, int(os.environ.get("STT_NUM_BEAMS", "1")))
-STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "256")))
+STT_CHUNK_OVERLAP_SEC = float(os.environ.get("STT_CHUNK_OVERLAP_SEC", "5"))
+STT_CHUNK_OVERLAP_SEC = max(0.0, min(STT_CHUNK_SEC - 1.0, STT_CHUNK_OVERLAP_SEC))
+STT_NUM_BEAMS = max(1, int(os.environ.get("STT_NUM_BEAMS", "5")))
+STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "448")))
+STT_TRIM_TOP_DB = float(os.environ.get("STT_TRIM_TOP_DB", "25"))
+STT_MIN_KEEP_SEC = float(os.environ.get("STT_MIN_KEEP_SEC", "0.4"))
+STT_MIN_CHUNK_SEC = float(os.environ.get("STT_MIN_CHUNK_SEC", "0.35"))
+STT_CONDITION_ON_PREV = os.environ.get("STT_CONDITION_ON_PREV", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+STT_FORCE_LANGUAGE = os.environ.get("STT_FORCE_LANGUAGE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+STT_PROMPT_MAX_CHARS = max(32, int(os.environ.get("STT_PROMPT_MAX_CHARS", "220")))
 _max_audio_raw = os.environ.get("VOICE_TO_TEXT_MAX_AUDIO_SEC", "0").strip()
 VOICE_TO_TEXT_MAX_AUDIO_SEC = float(_max_audio_raw) if _max_audio_raw else 0.0
 if VOICE_TO_TEXT_MAX_AUDIO_SEC > 0:
@@ -67,11 +84,11 @@ _VOICE_TO_TEXT_USE_INFER_LOCK = os.environ.get("VOICE_TO_TEXT_USE_INFER_LOCK", "
 
 print("Starting server and loading model...")
 try:
-    model_id = os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-base")
+    model_id = os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small")
     use_cuda = torch.cuda.is_available()
     device = "cuda" if use_cuda else "cpu"
     dtype = torch.float16 if use_cuda else torch.float32
-    print(f"Using device: {device}")
+    print(f"Using device: {device}, model: {model_id}")
 
     processor = AutoProcessor.from_pretrained(model_id)
     speech_to_text_model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -91,10 +108,13 @@ except Exception:
     dtype = torch.float32
 
 
-def resolve_whisper_language(language: str | None) -> str:
+def resolve_whisper_language(language: str | None) -> str | None:
+    """UI/Fusion kodunu Whisper dil adına çevirir. Boş veya auto → None (otomatik tespit)."""
     if not language or not str(language).strip():
-        return "turkish"
+        return None
     key = str(language).strip().lower()
+    if key in {"auto", "detect", "automatic"}:
+        return None
     mapping = {
         "tr": "turkish",
         "turkish": "turkish",
@@ -141,7 +161,148 @@ def _load_audio_16k_mono(path: str) -> tuple[np.ndarray, int]:
     return audio_input.astype(np.float32), int(sr)
 
 
-def _transcribe_sync(temp_file_path: str, whisper_lang: str) -> dict[str, str]:
+def _preprocess_audio(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    y = np.asarray(audio, dtype=np.float32)
+    y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+    if y.size == 0:
+        return y
+
+    try:
+        y_trim, _ = librosa.effects.trim(y, top_db=STT_TRIM_TOP_DB)
+        if y_trim.size >= int(STT_MIN_KEEP_SEC * sample_rate):
+            y = y_trim
+    except Exception:
+        pass
+
+    peak = float(np.max(np.abs(y)) + 1e-8)
+    y = (y / peak).astype(np.float32)
+    return y
+
+
+def _chunk_starts(total_samples: int, chunk_samples: int, hop_samples: int) -> list[int]:
+    if total_samples <= chunk_samples:
+        return [0]
+    hop = max(1, hop_samples)
+    starts = list(range(0, total_samples, hop))
+    last = max(0, total_samples - chunk_samples)
+    if not starts or starts[-1] != last:
+        if last not in starts:
+            starts.append(last)
+    return sorted(set(starts))
+
+
+def _normalize_words(text: str) -> list[str]:
+    return [w for w in re.split(r"\s+", (text or "").strip()) if w]
+
+
+def _merge_chunk_texts(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    merged = parts[0].strip()
+    for nxt in parts[1:]:
+        nxt = nxt.strip()
+        if not nxt:
+            continue
+        if not merged:
+            merged = nxt
+            continue
+        out_words = _normalize_words(merged)
+        nxt_words = _normalize_words(nxt)
+        best = 0
+        max_k = min(len(out_words), len(nxt_words), 16)
+        for k in range(max_k, 0, -1):
+            if out_words[-k:] == nxt_words[:k]:
+                best = k
+                break
+        if best:
+            merged = merged + " " + " ".join(nxt_words[best:])
+        else:
+            merged = merged + " " + nxt
+    return re.sub(r"\s+", " ", merged).strip()
+
+
+def _normalize_whisper_lang_code(lang: str) -> str:
+    s = str(lang).strip().lower().strip("<>|")
+    iso_map = {
+        "tr": "turkish",
+        "en": "english",
+        "ar": "arabic",
+    }
+    if s in iso_map:
+        return iso_map[s]
+    if s in {"turkish", "english", "arabic", "turkce", "türkçe"}:
+        return "turkish" if s in {"turkce", "türkçe"} else s
+    return s
+
+
+def _detect_whisper_language(input_features: torch.Tensor) -> str | None:
+    if speech_to_text_model is None:
+        return None
+    detect_fn = getattr(speech_to_text_model, "detect_language", None)
+    if not callable(detect_fn):
+        return None
+    try:
+        with torch.no_grad():
+            lang, _probs = detect_fn(input_features)
+        if isinstance(lang, (list, tuple)):
+            lang = lang[0] if lang else None
+        if lang is None:
+            return None
+        return _normalize_whisper_lang_code(str(lang))
+    except Exception:
+        _log.exception("whisper_language_detect_failed")
+        return None
+
+
+def _prompt_ids_from_text(prev_text: str | None) -> torch.Tensor | None:
+    if not prev_text or not STT_CONDITION_ON_PREV or processor is None:
+        return None
+    snippet = prev_text.strip()[-STT_PROMPT_MAX_CHARS:]
+    if not snippet:
+        return None
+    try:
+        ids = processor.get_prompt_ids(snippet, return_tensors="pt")
+        if hasattr(ids, "input_ids"):
+            ids = ids.input_ids
+        return ids.to(device)
+    except Exception:
+        return None
+
+
+def _transcribe_chunk(
+    chunk: np.ndarray,
+    sample_rate: int,
+    whisper_lang: str | None,
+    prev_text: str | None,
+) -> str:
+    input_features = processor(
+        chunk.astype(np.float32),
+        sampling_rate=sample_rate,
+        return_tensors="pt",
+    )
+    features = input_features["input_features"].to(device=device, dtype=dtype)
+
+    gen_kw: dict = {
+        "input_features": features,
+        "task": "transcribe",
+        "max_new_tokens": STT_MAX_NEW_TOKENS,
+        "num_beams": STT_NUM_BEAMS,
+        "do_sample": False,
+    }
+    if whisper_lang:
+        gen_kw["language"] = whisper_lang
+
+    prompt_ids = _prompt_ids_from_text(prev_text)
+    if prompt_ids is not None:
+        gen_kw["prompt_ids"] = prompt_ids
+
+    with torch.no_grad():
+        generated_ids = speech_to_text_model.generate(**gen_kw)
+
+    return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+
+
+def _transcribe_sync(temp_file_path: str, requested_lang: str | None) -> dict[str, str | bool | None]:
     t0 = time.perf_counter()
     _cm = _infer_lock if _VOICE_TO_TEXT_USE_INFER_LOCK else contextlib.nullcontext()
     with _cm:
@@ -150,7 +311,11 @@ def _transcribe_sync(temp_file_path: str, whisper_lang: str) -> dict[str, str]:
 
         t_load = time.perf_counter()
         audio_input, sample_rate = _load_audio_16k_mono(temp_file_path)
+        audio_input = _preprocess_audio(audio_input, sample_rate)
         load_ms = (time.perf_counter() - t_load) * 1000
+
+        if audio_input.size == 0:
+            return {"text": "", "language": requested_lang, "language_auto_detected": False}
 
         if VOICE_TO_TEXT_MAX_AUDIO_SEC > 0:
             max_samples = int(VOICE_TO_TEXT_MAX_AUDIO_SEC * sample_rate)
@@ -158,54 +323,78 @@ def _transcribe_sync(temp_file_path: str, whisper_lang: str) -> dict[str, str]:
                 audio_input = audio_input[:max_samples]
                 _log.info("audio_trimmed_to_sec=%s", VOICE_TO_TEXT_MAX_AUDIO_SEC)
 
-        chunk_size = int(STT_CHUNK_SEC * sample_rate)
-        total_samples = len(audio_input)
-        chunk_texts: list[str] = []
-        t_gen = time.perf_counter()
-        for start_idx in range(0, total_samples, chunk_size):
-            end_idx = min(start_idx + chunk_size, total_samples)
-            chunk = audio_input[start_idx:end_idx]
-
-            input_features = processor(
-                chunk.astype(np.float32),
+        whisper_lang = resolve_whisper_language(requested_lang)
+        language_auto_detected = False
+        if whisper_lang is None or not STT_FORCE_LANGUAGE:
+            first_end = min(len(audio_input), int(min(STT_CHUNK_SEC, 30.0) * sample_rate))
+            probe = audio_input[:first_end]
+            probe_features = processor(
+                probe.astype(np.float32),
                 sampling_rate=sample_rate,
                 return_tensors="pt",
-            )
-            features = input_features["input_features"].to(device=device, dtype=dtype)
+            )["input_features"].to(device=device, dtype=dtype)
+            detected = _detect_whisper_language(probe_features)
+            if detected:
+                whisper_lang = detected
+                language_auto_detected = True
+            elif whisper_lang is None:
+                whisper_lang = "turkish"
 
-            with torch.no_grad():
-                gen_kw: dict = dict(
-                    input_features=features,
-                    language=whisper_lang,
-                    task="transcribe",
-                    max_new_tokens=STT_MAX_NEW_TOKENS,
-                    num_beams=STT_NUM_BEAMS,
-                )
-                generated_ids = speech_to_text_model.generate(**gen_kw)
+        chunk_samples = int(STT_CHUNK_SEC * sample_rate)
+        hop_samples = int(max(1.0, (STT_CHUNK_SEC - STT_CHUNK_OVERLAP_SEC) * sample_rate))
+        starts = _chunk_starts(len(audio_input), chunk_samples, hop_samples)
+        min_chunk_samples = int(STT_MIN_CHUNK_SEC * sample_rate)
 
-            chunk_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-            if chunk_text:
-                chunk_texts.append(chunk_text)
+        chunk_texts: list[str] = []
+        prev_text: str | None = None
+        t_gen = time.perf_counter()
+        for start_idx in starts:
+            end_idx = min(start_idx + chunk_samples, len(audio_input))
+            chunk = audio_input[start_idx:end_idx]
+            if chunk.size < min_chunk_samples:
+                continue
+
+            text = _transcribe_chunk(chunk, sample_rate, whisper_lang, prev_text)
+            if text:
+                chunk_texts.append(text)
+                prev_text = _merge_chunk_texts(chunk_texts)
 
         gen_ms = (time.perf_counter() - t_gen) * 1000
         total_ms = (time.perf_counter() - t0) * 1000
         _log.info(
-            "transcribe_done load_ms=%.0f generate_ms=%.0f total_ms=%.0f samples=%d chunks=%d",
+            "transcribe_done lang=%s auto=%s load_ms=%.0f generate_ms=%.0f total_ms=%.0f "
+            "samples=%d chunks=%d beams=%d",
+            whisper_lang,
+            language_auto_detected,
             load_ms,
             gen_ms,
             total_ms,
-            total_samples,
-            max(1, (total_samples + chunk_size - 1) // chunk_size),
+            len(audio_input),
+            len(starts),
+            STT_NUM_BEAMS,
         )
 
-    return {"text": " ".join(chunk_texts).strip(), "language": whisper_lang}
+    return {
+        "text": _merge_chunk_texts(chunk_texts),
+        "language": whisper_lang,
+        "language_auto_detected": language_auto_detected,
+    }
 
 
 @app.get("/")
 async def root():
     return {
         "message": "Voice-to-Text API. POST audio to /transcribe.",
-        "transcribe": "multipart: file + optional Form field 'language' (turkish|english|arabic or tr|en|ar). Default turkish.",
+        "transcribe": (
+            "multipart: file + optional Form field 'language' "
+            "(turkish|english|arabic or tr|en|ar|auto). Default turkish."
+        ),
+        "defaults": {
+            "model": os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small"),
+            "chunk_sec": STT_CHUNK_SEC,
+            "chunk_overlap_sec": STT_CHUNK_OVERLAP_SEC,
+            "num_beams": STT_NUM_BEAMS,
+        },
     }
 
 
@@ -218,7 +407,7 @@ async def transcribe_audio(
         raise HTTPException(status_code=500, detail="Model could not be loaded. Check server logs.")
 
     whisper_lang = resolve_whisper_language(language)
-    _log.info("transcribe_begin file=%s language=%s", file.filename, whisper_lang)
+    _log.info("transcribe_begin file=%s language=%s", file.filename, whisper_lang or "auto")
 
     temp_file_path = None
     try:
@@ -238,7 +427,7 @@ async def transcribe_audio(
         nbytes = os.path.getsize(temp_file_path) if temp_file_path else 0
         _log.info("upload_saved bytes=%d recv_ms=%.0f", nbytes, recv_ms)
 
-        return await run_in_threadpool(_transcribe_sync, temp_file_path, whisper_lang)
+        return await run_in_threadpool(_transcribe_sync, temp_file_path, language)
     except HTTPException:
         raise
     except Exception as e:

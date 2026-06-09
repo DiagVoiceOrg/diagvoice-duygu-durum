@@ -64,6 +64,30 @@ async function postTextSentiment(text) {
   return data;
 }
 
+async function postEmotionFusion(textSentiment, audio) {
+  const origin = getFusionOrigin();
+  const body = {};
+  if (textSentiment && typeof textSentiment.score === 'number') {
+    body.text_sentiment = {
+      sentiment: textSentiment.sentiment ?? textSentiment.label ?? null,
+      score: textSentiment.score,
+    };
+  }
+  if (audio && Array.isArray(audio.probs) && audio.probs.length >= 4) {
+    body.audio = {
+      probs: audio.probs.slice(0, 4),
+      intensity: typeof audio.intensity === 'number' ? audio.intensity : undefined,
+      pred_label: audio.pred_label ?? undefined,
+      pred_id: typeof audio.pred_id === 'number' ? audio.pred_id : undefined,
+    };
+  }
+  const { data } = await axios.post(`${origin}/analyze-emotion-fusion`, body, {
+    timeout: Number.isFinite(API_TIMEOUT_MS) ? API_TIMEOUT_MS : 600000,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return data;
+}
+
 const KNOWN_CARD_IDS = new Set(CARD_IDS);
 
 /** Profildeki tüm bilinen kartlar varsa tek analyze-fused (valence/fusion dahil). */
@@ -93,6 +117,7 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
   const sttLang = normalizeSpeechLanguageForStt(speechLanguage);
   const ordered = resolveCardOrder(profileCards);
   const uniqueIds = [...new Set(ordered.filter((id) => id && KNOWN_CARD_IDS.has(id)))];
+  const wantsUnifiedFusion = ordered.includes('unified_emotion');
 
   if (uniqueIds.length === 0 || shouldUseAnalyzeFused(uniqueIds)) {
     return analyzeFused(audioData, sttLang);
@@ -218,6 +243,34 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
     }
   }
 
+  let valenceText = null;
+  let valenceAudio = null;
+  let confidence = null;
+  let fused = null;
+  let unifiedEmotion = null;
+
+  const canFuse =
+    wantsUnifiedFusion &&
+    uniqueIds.includes('sentiment') &&
+    uniqueIds.includes('audio_emotion') &&
+    textSentimentForResponse &&
+    audioResult &&
+    !textErr &&
+    !audioErr;
+
+  if (canFuse) {
+    try {
+      const fusion = await postEmotionFusion(textSentimentForResponse, audioResult);
+      valenceText = fusion.valence_text ?? null;
+      valenceAudio = fusion.valence_audio ?? null;
+      confidence = fusion.confidence ?? null;
+      fused = fusion.fused ?? null;
+      unifiedEmotion = fusion.unified_emotion ?? null;
+    } catch {
+      /* fusion optional; source cards still render */
+    }
+  }
+
   return {
     text: sttText,
     text_error: sttErr,
@@ -235,9 +288,10 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
     benchmark_v2_error: benchmarkV2Err,
     text_sentiment: textSentimentForResponse,
     text_sentiment_error: textErr,
-    valence_text: null,
-    valence_audio: null,
-    confidence: null,
-    fused: null,
+    valence_text: valenceText,
+    valence_audio: valenceAudio,
+    confidence,
+    fused,
+    unified_emotion: unifiedEmotion,
   };
 }

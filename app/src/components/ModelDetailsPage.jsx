@@ -2,6 +2,7 @@ import React from 'react';
 import { mergeCardCopy } from '../lib/cardCopy';
 import {
   demoT,
+  agreementUiLabel,
   depressionRiskUiLabel,
   emotionUiLabel,
   genderUiLabel,
@@ -76,6 +77,16 @@ const GENDER_COLOR = {
   male: '#3b82f6',
   female: '#ec4899',
 };
+const EMOTION_DETAIL_COLORS = {
+  sadness: '#6366f1',
+  fear: '#8b5cf6',
+  happiness: '#10b981',
+  anger: '#ef4444',
+};
+
+function getEmotionColor(predLabel) {
+  return EMOTION_DETAIL_COLORS[predLabel] || '#6b7280';
+}
 const AGEBIN_LABELS = ['15-24', '25-34', '35-44', '45-54', '55-64'];
 const AGE_DISPLAY_SHIFT_BINS = 1;
 
@@ -98,6 +109,7 @@ const AGE_DISPLAY_SHIFT_BINS = 1;
  * @param {object|null} [props.mentalFitnessResult]
  * @param {object|null} [props.depressionResult]
  * @param {{ sentiment: string|null, score: number|null }} [props.sentimentResult]
+ * @param {object|null} [props.unifiedEmotionResult]
  */
 export default function ModelDetailsPage({
   demoLang = 'tr',
@@ -121,6 +133,7 @@ export default function ModelDetailsPage({
   ageGenderError,
   valenceResult,
   confidenceResult,
+  unifiedEmotionResult = null,
 }) {
   const lang = normalizeDemoLang(demoLang);
 
@@ -176,10 +189,14 @@ export default function ModelDetailsPage({
     fusedValence !== null ||
     typeof confidenceText === 'number' ||
     typeof confidenceAudio === 'number' ||
-    typeof disagreement === 'number';
+    typeof disagreement === 'number' ||
+    (Array.isArray(unifiedEmotionResult?.probs) && unifiedEmotionResult.probs.length > 0);
 
   const showFusionExtras =
-    order.includes('sentiment') && order.includes('audio_emotion') && hasFusionPanels;
+    order.includes('unified_emotion') &&
+    order.includes('sentiment') &&
+    order.includes('audio_emotion') &&
+    hasFusionPanels;
 
   /** @returns {React.ReactElement | null} */
   function detailBlockFor(cardId) {
@@ -258,6 +275,101 @@ export default function ModelDetailsPage({
             ) : (
               <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
             )}
+          </DetailCard>
+        );
+      }
+
+      case 'unified_emotion': {
+        if (!unifiedEmotionResult?.probs?.length) {
+          return (
+            <DetailCard key={cardId} title={copy.displayTitle}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        const textProbs = unifiedEmotionResult.sources?.text?.probs;
+        const audioProbs = unifiedEmotionResult.sources?.audio?.probs;
+        return (
+          <DetailCard
+            key={cardId}
+            title={copy.displayTitle}
+            subtitle={demoT(lang, 'mdUnifiedIntro')}
+            chromaIndicator={{ background: getEmotionColor(unifiedEmotionResult.pred_label) }}
+          >
+            <h4 className="md-detail-h4">{demoT(lang, 'mdPredSummary')}</h4>
+            <DetailKv
+              label={demoT(lang, 'mdPredLabel')}
+              value={emotionUiLabel(lang, unifiedEmotionResult.pred_label)}
+            />
+            <DetailKv
+              label={demoT(lang, 'mdPredId')}
+              value={
+                typeof unifiedEmotionResult.pred_id === 'number'
+                  ? String(unifiedEmotionResult.pred_id)
+                  : undefined
+              }
+            />
+            {unifiedEmotionResult.agreement ? (
+              <DetailKv
+                label={demoT(lang, 'mdUnifiedAgreement')}
+                value={agreementUiLabel(lang, unifiedEmotionResult.agreement)}
+              />
+            ) : null}
+            {typeof unifiedEmotionResult.disagreement === 'number' ? (
+              <DetailKv
+                label={demoT(lang, 'disagreementLbl')}
+                value={unifiedEmotionResult.disagreement.toFixed(3)}
+              />
+            ) : null}
+            {typeof unifiedEmotionResult.w_text === 'number' ? (
+              <div className="profile-confidence">
+                {demoT(lang, 'textWeight', { p: `${Math.round(unifiedEmotionResult.w_text * 100)}` })}
+              </div>
+            ) : null}
+
+            <h4 className="md-detail-h4">{demoT(lang, 'mdUnifiedFused')}</h4>
+            <div className="prob-section">
+              {unifiedEmotionResult.probs.map((prob, idx) => (
+                <ProbBarRow
+                  key={`fused-${idx}`}
+                  label={emotionLabels[idx] || classLabelForIndex(idx)}
+                  value={prob}
+                  color={emotionColors[idx] || '#94a3b8'}
+                />
+              ))}
+            </div>
+
+            {Array.isArray(textProbs) && textProbs.length >= 4 ? (
+              <>
+                <h4 className="md-detail-h4">{demoT(lang, 'mdUnifiedTextSrc')}</h4>
+                <div className="prob-section">
+                  {textProbs.slice(0, 4).map((prob, idx) => (
+                    <ProbBarRow
+                      key={`text-${idx}`}
+                      label={emotionLabels[idx] || classLabelForIndex(idx)}
+                      value={prob}
+                      color="#3b82f6"
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {Array.isArray(audioProbs) && audioProbs.length >= 4 ? (
+              <>
+                <h4 className="md-detail-h4">{demoT(lang, 'mdUnifiedAudioSrc')}</h4>
+                <div className="prob-section">
+                  {audioProbs.slice(0, 4).map((prob, idx) => (
+                    <ProbBarRow
+                      key={`audio-${idx}`}
+                      label={emotionLabels[idx] || classLabelForIndex(idx)}
+                      value={prob}
+                      color="#8b5cf6"
+                    />
+                  ))}
+                </div>
+              </>
+            ) : null}
           </DetailCard>
         );
       }
@@ -537,21 +649,31 @@ export default function ModelDetailsPage({
     const hasAnyValence = valenceText !== null || valenceAudio !== null || fusedValence !== null;
     if (!hasAnyValence) return null;
 
-    const fusedDisplay = fusedLabel
-      ? fusedLabel.charAt(0).toUpperCase() + fusedLabel.slice(1).toLowerCase()
-      : '-';
+    const unifiedLabel = unifiedEmotionResult?.pred_label;
+    const fusedDisplay = unifiedLabel
+      ? emotionUiLabel(lang, unifiedLabel)
+      : fusedLabel
+        ? fusedLabel.charAt(0).toUpperCase() + fusedLabel.slice(1).toLowerCase()
+        : '-';
+
+    const accentColor = unifiedLabel
+      ? getEmotionColor(unifiedLabel)
+      : fusedAccentColor;
 
     return (
       <div className="card fusion-result">
         <div>
           <div
             className={`fusion-label ${
-              fusedLabel?.toLowerCase() === 'positive'
-                ? 'positive'
-                : fusedLabel?.toLowerCase() === 'negative'
-                  ? 'negative'
-                  : 'neutral'
+              unifiedLabel
+                ? 'neutral'
+                : fusedLabel?.toLowerCase() === 'positive'
+                  ? 'positive'
+                  : fusedLabel?.toLowerCase() === 'negative'
+                    ? 'negative'
+                    : 'neutral'
             }`}
+            style={unifiedLabel ? { color: accentColor } : undefined}
           >
             {demoT(lang, 'fusedEmotionPrefix')} {fusedDisplay}
           </div>
@@ -573,7 +695,7 @@ export default function ModelDetailsPage({
               className="source-fill"
               style={{
                 width: `${typeof fusedValence === 'number' ? fusedValence * 100 : 0}%`,
-                background: fusedAccentColor,
+                background: accentColor,
                 height: '100%',
               }}
             />

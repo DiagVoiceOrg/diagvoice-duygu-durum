@@ -180,6 +180,18 @@ curl -X POST "https://aiapi.diagvoice.com/analyze-fused" \
     "valence": 0.0,
     "label": "POSITIVE|NEGATIVE|null",
     "w_text": 0.0
+  },
+  "unified_emotion": {
+    "pred_label": "happiness",
+    "pred_id": 2,
+    "probs": [0.08, 0.07, 0.72, 0.13],
+    "agreement": "high|medium|low",
+    "disagreement": 0.31,
+    "w_text": 0.58,
+    "sources": {
+      "text": { "sentiment": "Positive", "score": 0.91, "probs": [0.05, 0.05, 0.85, 0.05] },
+      "audio": { "pred_label": "sadness", "intensity": 0.6, "probs": [0.55, 0.15, 0.2, 0.1] }
+    }
   }
 }
 ```
@@ -190,6 +202,70 @@ curl -X POST "https://aiapi.diagvoice.com/analyze-fused" \
 - `valence_*` alanları `[0,1]` aralığında normalize skorlardır.
 - `fused.label`, `fused.valence` değerine göre türetilir (`>= 0.5 => POSITIVE`).
 - `confidence.disagreement`, metin ve ses valence farkını gösterir.
+- `unified_emotion`, metin duygu + ses emosyonunun **4 sınıf** (sadness, fear, happiness, anger) olasılık birleşimidir; `agreement` kaynak uyumunu gösterir.
+
+---
+
+## 3.2.1 POST `/analyze-emotion-fusion`
+
+### Amaç
+
+Metin duygu ve ses emosyonu sonuçlarını (STT/ses analizi çalıştırmadan) ortak 4-sınıf uzayında birleştirir. Kısmi CMS profilleri ve harici istemciler için.
+
+### İstek
+
+İçerik türü: `application/json`
+
+| Alan | Tip | Zorunlu | Açıklama |
+|---|---|---|---|
+| `text_sentiment.sentiment` | string | Koşullu* | Positive/Negative/Notr vb. |
+| `text_sentiment.score` | float | Koşullu* | `[0,1]` model skoru |
+| `audio.probs` | float[4] | Koşullu* | Ses emosyon olasılıkları (sıra: sadness, fear, happiness, anger) |
+| `audio.intensity` | float | Hayır | Ses yoğunluğu |
+| `audio.pred_label` | string | Hayır | Ses baskın etiketi |
+
+\* En az `text_sentiment` veya `audio` gerekir; tam birleşim için ikisi de önerilir.
+
+```bash
+curl -X POST "https://aiapi.diagvoice.com/analyze-emotion-fusion" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text_sentiment": { "sentiment": "Positive", "score": 0.91 },
+    "audio": { "probs": [0.55, 0.15, 0.2, 0.1], "intensity": 0.6, "pred_label": "sadness" }
+  }'
+```
+
+### Yanıt
+
+```json
+{
+  "unified_emotion": {
+    "pred_label": "happiness",
+    "pred_id": 2,
+    "probs": [0.08, 0.07, 0.72, 0.13],
+    "agreement": "medium",
+    "disagreement": 0.31,
+    "w_text": 0.58,
+    "sources": { "text": {}, "audio": {} }
+  },
+  "valence_text": 0.91,
+  "valence_audio": 0.35,
+  "confidence": {
+    "text": 0.82,
+    "audio": 0.71,
+    "disagreement": 0.56,
+    "dynamic_fusion": true
+  },
+  "fused": {
+    "valence": 0.72,
+    "label": "POSITIVE",
+    "w_text": 0.58
+  }
+}
+```
+
+- Geriye uyumluluk: `valence_text`, `valence_audio`, `fused`, `confidence` alanları `/analyze-fused` ile aynı anlamdadır.
+- Yalnızca tek modality verilirse `unified_emotion` o kaynaktan türetilir veya eksik kaynak `null` kalır.
 
 ---
 
@@ -670,11 +746,13 @@ Not: Aşağıdaki alanlar kodda state’e yazılır; ancak mevcut “Özet” ek
 - `age_gender` -> `_ageGenderResult`
 - `age_gender_error` -> `_ageGenderError`
 - `valence_text`, `valence_audio`, `fused` -> `_valenceResult`
+- `unified_emotion` -> `_unifiedEmotionResult` (4-sınıf birleşik emosyon kartı)
 - `confidence` -> `_confidenceResult`
 
 Bu alanlar `ModelDetailsPage` içinde aşağıdaki kartlara karşılık gelir (detay sekmesi tekrar açılırsa):
 
 - Yaş & Cinsiyet kartı (`age_gender.gender`, `age_gender.agebin`)
+- Birleşik emosyon kartı (`unified_emotion.pred_label`, `probs`, `agreement`, `sources`)
 - Fused Duygu kartı (`fused.valence`, `fused.label`, `fused.w_text`)
 - Metin/Ses valence karşılaştırması (`valence_text`, `valence_audio`)
 - Güven ve uyumsuzluk kartı (`confidence.text`, `confidence.audio`, `confidence.disagreement`, `confidence.dynamic_fusion`)
@@ -682,7 +760,9 @@ Bu alanlar `ModelDetailsPage` içinde aşağıdaki kartlara karşılık gelir (d
 ### 6.4 Endpoint Bazlı Frontend Kullanım Durumu
 
 - `POST /analyze-fused`:
-  - **Doğrudan kullanılıyor** (ana analiz akışı)
+  - **Doğrudan kullanılıyor** (tam profil analiz akışı)
+- `POST /analyze-emotion-fusion`:
+  - **Kısmi profillerde kullanılıyor** (`analyzePartial.js`: sentiment + audio_emotion sonrası)
 - `POST /analyze-depression`:
   - Frontend tarafından doğrudan çağrılmıyor; `/analyze-fused` içindeki `depression` alanı kullanılıyor.
 - `POST /analyze-voice-to-text`:
@@ -1017,6 +1097,15 @@ Ayrıca Fusion tarafında servis devre dışı ise:
     "valence": 0.0,
     "label": "POSITIVE|NEGATIVE|null",
     "w_text": 0.0
+  },
+  "unified_emotion": {
+    "pred_label": "happiness",
+    "pred_id": 2,
+    "probs": [0.08, 0.07, 0.72, 0.13],
+    "agreement": "high|medium|low",
+    "disagreement": 0.31,
+    "w_text": 0.58,
+    "sources": { "text": {}, "audio": {} }
   }
 }
 ```
@@ -1025,6 +1114,7 @@ Ayrıca Fusion tarafında servis devre dışı ise:
 
 - `text` / `text_error`: STT sonucu ve hata bilgisi.
 - `audio` / `audio_error`: Ses duygu sonucu ve hata bilgisi.
+- `unified_emotion`: Metin+ses 4-sınıf birleşik emosyon (`sadness`, `fear`, `happiness`, `anger`); `sources` altında kaynak dağılımları.
 - `disease` / `disease_error`: Hastalık modeli sonucu ve hata bilgisi.
 - `mental_fitness` / `mental_fitness_error`: Mental fitness sonucu ve hata bilgisi.
 - `age_gender` / `age_gender_error`: Yaş-cinsiyet sonucu ve hata bilgisi.
