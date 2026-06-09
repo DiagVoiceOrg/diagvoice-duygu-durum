@@ -53,6 +53,7 @@ export function resolveUnifiedEmotionWarn(
   {
     order,
     analyzed,
+    isLoading = false,
     unifiedEmotionResult,
     unifiedEmotionError,
     textSttError,
@@ -63,7 +64,7 @@ export function resolveUnifiedEmotionWarn(
   if (!order.includes('unified_emotion') || unifiedEmotionResult?.probs?.length) {
     return null;
   }
-  if (!analyzed) {
+  if (isLoading || !analyzed) {
     return null;
   }
   if (unifiedEmotionError) {
