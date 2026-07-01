@@ -40,6 +40,7 @@ STT_CHUNK_SEC = max(5.0, min(120.0, STT_CHUNK_SEC))
 STT_CHUNK_OVERLAP_SEC = float(os.environ.get("STT_CHUNK_OVERLAP_SEC", "5"))
 STT_CHUNK_OVERLAP_SEC = max(0.0, min(STT_CHUNK_SEC - 1.0, STT_CHUNK_OVERLAP_SEC))
 STT_NUM_BEAMS = max(1, int(os.environ.get("STT_NUM_BEAMS", "5")))
+STT_CPU_GREEDY = os.environ.get("STT_CPU_GREEDY", "1").strip().lower() not in ("0", "false", "no")
 STT_MAX_NEW_TOKENS = max(32, int(os.environ.get("STT_MAX_NEW_TOKENS", "444")))
 STT_TRIM_TOP_DB = float(os.environ.get("STT_TRIM_TOP_DB", "25"))
 STT_MIN_KEEP_SEC = float(os.environ.get("STT_MIN_KEEP_SEC", "0.4"))
@@ -82,6 +83,14 @@ _VOICE_TO_TEXT_USE_INFER_LOCK = os.environ.get("VOICE_TO_TEXT_USE_INFER_LOCK", "
     "no",
 )
 
+
+def _effective_num_beams() -> int:
+    """CPU'da beam=5 tek istekte dakikalar sürebilir; varsayılan greedy (1)."""
+    if device == "cpu" and STT_CPU_GREEDY and STT_NUM_BEAMS > 1:
+        return 1
+    return STT_NUM_BEAMS
+
+
 print("Starting server and loading model...")
 try:
     model_id = os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small")
@@ -98,7 +107,8 @@ try:
     )
     speech_to_text_model.to(device)
     speech_to_text_model.eval()
-    print("Model loaded successfully.")
+    _effective_beams = _effective_num_beams()
+    print(f"Model loaded successfully. STT num_beams={_effective_beams} (configured={STT_NUM_BEAMS}, cpu_greedy={STT_CPU_GREEDY}).")
 except Exception:
     print("!!! FATAL: Failed to load model !!!")
     print(traceback.format_exc())
@@ -106,6 +116,73 @@ except Exception:
     speech_to_text_model = None
     device = "cpu"
     dtype = torch.float32
+
+
+_FFMPEG_FIRST_EXTENSIONS = {
+    ".webm",
+    ".opus",
+    ".ogg",
+    ".m4a",
+    ".mp4",
+    ".aac",
+    ".mp3",
+    ".flac",
+    ".wma",
+}
+
+
+def _load_via_pydub(path: str, sample_rate: int) -> tuple[np.ndarray, int]:
+    if AudioSegment is None:
+        raise RuntimeError("pydub not available")
+    audio_segment = AudioSegment.from_file(path)
+    audio_segment = audio_segment.set_frame_rate(sample_rate).set_channels(1).set_sample_width(2)
+    wav_buffer = io.BytesIO()
+    audio_segment.export(wav_buffer, format="wav")
+    wav_buffer.seek(0)
+    audio_input, sr = librosa.load(wav_buffer, sr=sample_rate, mono=True)
+    if audio_input is None or len(audio_input) == 0:
+        raise RuntimeError("empty audio after pydub decode")
+    return audio_input.astype(np.float32), int(sr)
+
+
+def _load_audio_16k_mono(path: str) -> tuple[np.ndarray, int]:
+    sample_rate = 16000
+    ext = os.path.splitext(str(path).lower())[1]
+    if ext in _FFMPEG_FIRST_EXTENSIONS:
+        try:
+            return _load_via_pydub(path, sample_rate)
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Audio conversion failed because ffmpeg/ffprobe was not found on the system. "
+                    "Install ffmpeg and ensure it is on PATH, or upload a .wav file. "
+                    f"Original error: {e}"
+                ),
+            ) from e
+        except Exception as e:
+            _log.warning("pydub_decode_failed path=%s ext=%s err=%s; trying librosa", path, ext, e)
+
+    try:
+        audio_input, sr = librosa.load(path, sr=sample_rate, mono=True)
+        if audio_input is not None and len(audio_input) > 0:
+            return audio_input.astype(np.float32), int(sr)
+    except Exception:
+        pass
+
+    try:
+        return _load_via_pydub(path, sample_rate)
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Audio conversion failed because ffmpeg/ffprobe was not found on the system. "
+                "Install ffmpeg and ensure it is on PATH, or upload a .wav file. "
+                f"Original error: {e}"
+            ),
+        ) from e
+    except Exception as e:
+        raise RuntimeError(f"Could not decode audio file: {e}") from e
 
 
 def resolve_whisper_language(language: str | None) -> str | None:
@@ -130,35 +207,6 @@ def resolve_whisper_language(language: str | None) -> str | None:
         "العربية": "arabic",
     }
     return mapping.get(key, "turkish")
-
-
-def _load_audio_16k_mono(path: str) -> tuple[np.ndarray, int]:
-    sample_rate = 16000
-    try:
-        audio_input, sr = librosa.load(path, sr=sample_rate, mono=True)
-        if audio_input is not None and len(audio_input) > 0:
-            return audio_input.astype(np.float32), int(sr)
-    except Exception:
-        pass
-
-    try:
-        audio_segment = AudioSegment.from_file(path)
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Audio conversion failed because ffmpeg/ffprobe was not found on the system. "
-                "Install ffmpeg and ensure it is on PATH, or upload a .wav file. "
-                f"Original error: {e}"
-            ),
-        ) from e
-
-    audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-    wav_buffer = io.BytesIO()
-    audio_segment.export(wav_buffer, format="wav")
-    wav_buffer.seek(0)
-    audio_input, sr = librosa.load(wav_buffer, sr=16000, mono=True)
-    return audio_input.astype(np.float32), int(sr)
 
 
 def _preprocess_audio(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -302,20 +350,28 @@ def _transcribe_chunk(
     )
     features = input_features["input_features"].to(device=device, dtype=dtype)
 
+    prompt_ids = _prompt_ids_from_text(prev_text)
     gen_kw: dict = {
         "input_features": features,
-        "task": "transcribe",
-        "num_beams": STT_NUM_BEAMS,
+        "num_beams": _effective_num_beams(),
         "do_sample": False,
+        "max_new_tokens": _effective_max_new_tokens(prompt_ids),
     }
-    if whisper_lang:
-        gen_kw["language"] = whisper_lang
-
-    prompt_ids = _prompt_ids_from_text(prev_text)
     if prompt_ids is not None:
         gen_kw["prompt_ids"] = prompt_ids
 
-    gen_kw["max_new_tokens"] = _effective_max_new_tokens(prompt_ids)
+    if whisper_lang:
+        try:
+            gen_kw["forced_decoder_ids"] = processor.get_decoder_prompt_ids(
+                language=whisper_lang,
+                task="transcribe",
+            )
+        except Exception:
+            _log.warning("forced_decoder_ids_failed lang=%s; falling back to language kwarg", whisper_lang)
+            gen_kw["language"] = whisper_lang
+            gen_kw["task"] = "transcribe"
+    else:
+        gen_kw["task"] = "transcribe"
 
     with torch.no_grad():
         generated_ids = speech_to_text_model.generate(**gen_kw)
@@ -392,7 +448,7 @@ def _transcribe_sync(temp_file_path: str, requested_lang: str | None) -> dict[st
             total_ms,
             len(audio_input),
             len(starts),
-            STT_NUM_BEAMS,
+            _effective_num_beams(),
         )
 
     return {
@@ -414,7 +470,9 @@ async def root():
             "model": os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small"),
             "chunk_sec": STT_CHUNK_SEC,
             "chunk_overlap_sec": STT_CHUNK_OVERLAP_SEC,
-            "num_beams": STT_NUM_BEAMS,
+            "num_beams": _effective_num_beams(),
+            "num_beams_configured": STT_NUM_BEAMS,
+            "cpu_greedy": STT_CPU_GREEDY and device == "cpu",
         },
     }
 
