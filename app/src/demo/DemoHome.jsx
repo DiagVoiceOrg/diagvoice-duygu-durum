@@ -365,6 +365,7 @@ export default function DemoHome({
         const unifiedWarn = resolveUnifiedEmotionWarn(lang, demoT, {
           order,
           analyzed: !!currentAnalysisSource,
+          isLoading,
           unifiedEmotionResult,
           unifiedEmotionError,
           textSttError,
@@ -779,7 +780,8 @@ export default function DemoHome({
             confidenceResult={confidenceResult}
             unifiedEmotionResult={unifiedEmotionResult}
             unifiedEmotionError={unifiedEmotionError}
-            analyzed={!!currentAnalysisSource}
+            isLoading={isLoading}
+            analyzed={!!currentAnalysisSource && !isLoading}
           />
         )}
       </section>

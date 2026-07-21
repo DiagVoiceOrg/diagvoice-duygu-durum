@@ -142,6 +142,7 @@ export default function ModelDetailsPage({
   confidenceResult,
   unifiedEmotionResult = null,
   unifiedEmotionError = null,
+  isLoading = false,
   analyzed = false,
 }) {
   const lang = normalizeDemoLang(demoLang);
@@ -351,6 +352,13 @@ export default function ModelDetailsPage({
       }
 
       case 'unified_emotion': {
+        if (isLoading) {
+          return (
+            <DetailCard key={cardId} title={copy.displayTitle}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
         if (unifiedEmotionError) {
           return (
             <DetailCard key={cardId} title={copy.displayTitle} warn={unifiedEmotionError} />
@@ -360,6 +368,7 @@ export default function ModelDetailsPage({
           const unifiedWarn = resolveUnifiedEmotionWarn(lang, demoT, {
             order,
             analyzed,
+            isLoading,
             unifiedEmotionResult,
             unifiedEmotionError,
             textSttError,

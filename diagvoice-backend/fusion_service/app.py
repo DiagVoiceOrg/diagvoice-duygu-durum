@@ -59,6 +59,12 @@ def _normalize_speech_language_for_stt(raw: Optional[str]) -> str:
     return s if s in {"tr", "en", "ar"} else "tr"
 
 
+def _stt_language_form_value(raw: Optional[str]) -> str:
+    """Fusion → voice_to_text `language` form alanı (Whisper adları)."""
+    code = _normalize_speech_language_for_stt(raw)
+    return {"tr": "turkish", "en": "english", "ar": "arabic"}.get(code, "turkish")
+
+
 _CMS_ENABLED = os.environ.get("CMS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
 
 # Küçük multipart proxy istekleri: diske yazmadan bellekten upstream’e (0 = her zaman disk).
@@ -895,7 +901,7 @@ async def proxy_analyze_voice_to_text(
     file: UploadFile = File(..., description="Ses dosyası"),
     speech_language: str = Form("tr", description="Whisper dili: tr | en | ar"),
 ):
-    lg = _normalize_speech_language_for_stt(speech_language)
+    lg = _stt_language_form_value(speech_language)
     return await _proxy_file_upload(
         VOICE_TO_TEXT_URL,
         file,
@@ -1200,7 +1206,8 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
         )
         _log.info("togg_analyze parallel_gather_done total_ms=%.0f", (time.perf_counter() - t_par) * 1000)
 
-        from cms.usage_audit import redact_fused_details
+        from cms.usage_audit import client_ip_from_request, redact_fused_details
+        from fusion_service.togg_diversify import maybe_diversify_togg_response
 
         out: Dict[str, Any] = {
             "audio": audio_result,
@@ -1208,13 +1215,18 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
             "disease": disease_result,
             "disease_error": disease_err,
         }
-        request.state.audit_details = {
+        client_ip = client_ip_from_request(request.scope.get("headers") or [])
+        out, diversify_meta = maybe_diversify_togg_response(out, scope_key=client_ip)
+        audit_payload: Dict[str, Any] = {
             "route": "togg-analyze",
             "upload_name": upload_name,
             "file_bytes": file_bytes,
             "response": redact_fused_details(out),
             **_upstream_error_fields(("voice_sentiment", audio_err), ("disease", disease_err)),
         }
+        if diversify_meta:
+            audit_payload["diversify"] = diversify_meta
+        request.state.audit_details = audit_payload
         return out
     except Exception as e:
         _set_audit_details(
@@ -1294,6 +1306,7 @@ async def analyze_fused(
         ct = file.content_type or "application/octet-stream"
         _disk_bytes = os.path.getsize(disk)
         stt_lang = _normalize_speech_language_for_stt(speech_language)
+        stt_form_lang = _stt_language_form_value(speech_language)
         await _persist_upload_audio(
             request,
             tmp_path=disk,
@@ -1316,7 +1329,7 @@ async def analyze_fused(
                 file_field="file",
                 upload_name=upload_name,
                 content_type=ct,
-                extra_form={"language": stt_lang},
+                extra_form={"language": stt_form_lang},
                 step="fused_stt",
             )
             if err:
