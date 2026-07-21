@@ -89,6 +89,7 @@ export default function DemoHome({
   const [transcribedText, setTranscribedText] = useState('');
   const [sentimentResult, setSentimentResult] = useState({ sentiment: null, score: null });
   const [audioEmotionResult, setAudioEmotionResult] = useState(null);
+  const [audioEmotionV2Result, setAudioEmotionV2Result] = useState(null);
   const [diseaseResult, setDiseaseResult] = useState(null);
   const [depressionResult, setDepressionResult] = useState(null);
   const [mentalFitnessResult, setMentalFitnessResult] = useState(null);
@@ -103,6 +104,7 @@ export default function DemoHome({
   const [textSttError, setTextSttError] = useState(null);
   const [sentimentPipelineError, setSentimentPipelineError] = useState(null);
   const [audioEmotionError, setAudioEmotionError] = useState(null);
+  const [audioEmotionV2Error, setAudioEmotionV2Error] = useState(null);
   const [diseaseError, setDiseaseError] = useState(null);
   const [mentalFitnessError, setMentalFitnessError] = useState(null);
   const [depressionError, setDepressionError] = useState(null);
@@ -116,6 +118,7 @@ export default function DemoHome({
     setTranscribedText('');
     setSentimentResult({ sentiment: null, score: null });
     setAudioEmotionResult(null);
+    setAudioEmotionV2Result(null);
     setDiseaseResult(null);
     setDepressionResult(null);
     setMentalFitnessResult(null);
@@ -130,6 +133,7 @@ export default function DemoHome({
     setTextSttError(null);
     setSentimentPipelineError(null);
     setAudioEmotionError(null);
+    setAudioEmotionV2Error(null);
     setDiseaseError(null);
     setMentalFitnessError(null);
     setDepressionError(null);
@@ -141,6 +145,9 @@ export default function DemoHome({
       setTextSttError(typeof result.text_error === 'string' ? result.text_error : null);
       setSentimentPipelineError(typeof result.text_sentiment_error === 'string' ? result.text_sentiment_error : null);
       setAudioEmotionError(typeof result.audio_error === 'string' ? result.audio_error : null);
+      setAudioEmotionV2Error(
+        typeof result.audio_emotion_v2_error === 'string' ? result.audio_emotion_v2_error : null,
+      );
       setDiseaseError(typeof result.disease_error === 'string' ? result.disease_error : null);
       setMentalFitnessError(typeof result.mental_fitness_error === 'string' ? result.mental_fitness_error : null);
       setDepressionError(typeof result.depression_error === 'string' ? result.depression_error : null);
@@ -154,6 +161,10 @@ export default function DemoHome({
 
       if (result.audio) {
         setAudioEmotionResult(result.audio);
+      }
+
+      if (result.audio_emotion_v2) {
+        setAudioEmotionV2Result(result.audio_emotion_v2);
       }
 
       if (result.disease) {
@@ -253,6 +264,60 @@ export default function DemoHome({
             </CardChrome>
           </div>
         );
+
+      case 'audio_emotion_v2': {
+        if (audioEmotionV2Error && !audioEmotionV2Result) {
+          return (
+            <div className="card emotion-card" key={cardId}>
+              <CardChrome copy={copy}>
+                <div className="error">{audioEmotionV2Error}</div>
+              </CardChrome>
+            </div>
+          );
+        }
+        if (!audioEmotionV2Result) return null;
+        const v2Label = audioEmotionV2Result.prediction;
+        const v2Confidence =
+          typeof audioEmotionV2Result.confidence === 'number'
+            ? audioEmotionV2Result.confidence
+            : 0;
+        const v2Probs = audioEmotionV2Result.probabilities || {};
+        return (
+          <div className="card emotion-card" key={cardId}>
+            <CardChrome
+              copy={copy}
+              indicator={
+                <div
+                  className="emotion-indicator"
+                  style={{ backgroundColor: getEmotionColor(v2Label) }}
+                />
+              }
+            >
+              <div className="main-result">
+                <span
+                  className="result-highlight"
+                  style={{ color: getEmotionColor(v2Label) }}
+                >
+                  {emotionUiLabel(lang, v2Label)}
+                </span>
+                <span className="confidence-badge">
+                  {demoT(lang, 'confidenceBadge')}: {Math.round(v2Confidence * 100)}%
+                </span>
+              </div>
+              <div className="prob-section compact">
+                {EMOTION_ORDER.map((key) => (
+                  <ProbBar
+                    key={key}
+                    label={emotionUiLabel(lang, key)}
+                    value={v2Probs[key] ?? 0}
+                    color={getEmotionColor(key)}
+                  />
+                ))}
+              </div>
+            </CardChrome>
+          </div>
+        );
+      }
 
       case 'unified_emotion': {
         if (unifiedEmotionResult?.probs?.length) {
@@ -695,12 +760,14 @@ export default function DemoHome({
             transcribedText={transcribedText}
             textSttError={textSttError}
             audioEmotionError={audioEmotionError}
+            audioEmotionV2Error={audioEmotionV2Error}
             diseaseError={diseaseError}
             benchmarkV2Error={benchmarkV2Error}
             mentalFitnessError={mentalFitnessError}
             depressionError={depressionError}
             sentimentPipelineError={sentimentPipelineError}
             audioEmotionResult={audioEmotionResult}
+            audioEmotionV2Result={audioEmotionV2Result}
             diseaseResult={diseaseResult}
             benchmarkV2Result={benchmarkV2Result}
             mentalFitnessResult={mentalFitnessResult}

@@ -6,7 +6,12 @@
 export const CARD_REGISTRY = [
   { id: 'transcript', defaultTitle: 'Çevrilen Metin', description: 'Konuşmanın metne çevrilmiş hali' },
   { id: 'sentiment', defaultTitle: 'Metin Duygusu', description: 'Metin duygu analizi (Positive/Negative/Notr)' },
-  { id: 'audio_emotion', defaultTitle: 'Ses Emosyonu', description: 'Yalnızca ses — 4 sınıf duygu tahmini' },
+  { id: 'audio_emotion', defaultTitle: 'Ses Emosyonu', description: 'Yalnızca ses — 4 sınıf duygu tahmini (WavLM v1)' },
+  {
+    id: 'audio_emotion_v2',
+    defaultTitle: 'Ses Emosyonu v2',
+    description: 'Multimodal stacking — Whisper + E5 + WavLM + akustik (4 sınıf)',
+  },
   {
     id: 'unified_emotion',
     defaultTitle: 'Birleşik Emosyon',

@@ -18,7 +18,7 @@ if str(_BACKEND_ROOT) not in sys.path:
 import fastapi
 import httpx
 import uvicorn
-from fastapi import File, Form, HTTPException, Request, UploadFile
+from fastapi import File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -300,6 +300,15 @@ elif not str(_turkish_psych_raw).strip():
     TURKISH_PSYCH_CLASSIFIER_URL = ""
 else:
     TURKISH_PSYCH_CLASSIFIER_URL = _ipv4_loopback_url(str(_turkish_psych_raw).strip())
+
+# Emosyon v2 (multimodal stacking): /analyze-fused içinde çağrılmaz. Yalnız POST /analyze-emotion-v2 proxy hedefi.
+_emotion_v2_raw = os.environ.get("EMOTION_V2_URL")
+if _emotion_v2_raw is None:
+    EMOTION_V2_URL = _ipv4_loopback_url("http://127.0.0.1:8059/analyze-audio")
+elif not str(_emotion_v2_raw).strip():
+    EMOTION_V2_URL = ""
+else:
+    EMOTION_V2_URL = _ipv4_loopback_url(str(_emotion_v2_raw).strip())
 
 # benchmark_v2 (inference_api Flask, iç ağ) — boş string ile kapatılabilir
 _inference_url_raw = os.environ.get("INFERENCE_API_URL")
@@ -801,6 +810,7 @@ async def root():
             "age_gender": AGE_GENDER_URL,
             "depression_service": DEPRESSION_SERVICE_URL,
             "turkish_psych_classifier": TURKISH_PSYCH_CLASSIFIER_URL or None,
+            "emotion_v2": EMOTION_V2_URL or None,
             "benchmark_inference": INFERENCE_API_URL or None,
         },
         "togg_analyze": (
@@ -829,6 +839,11 @@ async def root():
                 "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi"
                 if TURKISH_PSYCH_CLASSIFIER_URL
                 else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
+            ),
+            "emotion_v2": (
+                "POST /analyze-emotion-v2 (multipart file, optional language/transcript) -> multimodal stacking emosyon v2"
+                if EMOTION_V2_URL
+                else "disabled (EMOTION_V2_URL empty)"
             ),
             "emotion_fusion": (
                 "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion"
@@ -933,6 +948,46 @@ async def analyze_emotion_fusion(request: Request, body: EmotionFusionRequest):
 async def proxy_analyze_voice_sentiment(request: Request, file: UploadFile = File(..., description="Ses dosyası")):
     return await _proxy_file_upload(
         VOICE_TO_SENTIMENT_URL, file, request=request, file_field_name="file", proxy_name="analyze-voice-sentiment"
+    )
+
+
+@app.post(
+    "/analyze-emotion-v2",
+    tags=["proxy"],
+    responses=PROXY_JSON_RESPONSES,
+    summary="Emosyon v2 — multimodal stacking (proxy)",
+)
+async def proxy_analyze_emotion_v2(
+    request: Request,
+    file: UploadFile = File(..., description="Ses dosyası"),
+    language: str = Form("turkish", description="turkish, english veya boş"),
+    transcript: Optional[str] = Form(None, description="Verilirse Whisper atlanır"),
+    include_branches: bool = Query(False, description="Model dallarının olasılıklarını yanıta ekler"),
+):
+    """
+    Multimodal stacking emosyon v2 (Whisper + E5 + WavLM + akustik).
+    `/analyze-fused` zincirine dahil değildir. Mevcut v1 ses emosyonundan (`/analyze-voice-sentiment`) bağımsızdır.
+    """
+    if not EMOTION_V2_URL:
+        raise HTTPException(status_code=503, detail="Emotion v2 disabled (EMOTION_V2_URL empty)")
+
+    upstream_url = EMOTION_V2_URL
+    if include_branches:
+        upstream_url = f"{upstream_url}?include_branches=true"
+
+    extra: Dict[str, str] = {}
+    if language is not None and str(language).strip():
+        extra["language"] = str(language).strip()
+    if transcript is not None and str(transcript).strip():
+        extra["transcript"] = str(transcript).strip()
+
+    return await _proxy_file_upload(
+        upstream_url,
+        file,
+        request=request,
+        file_field_name="file",
+        extra_form_data=extra or None,
+        proxy_name="analyze-emotion-v2",
     )
 
 

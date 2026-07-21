@@ -1,0 +1,842 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "DiagVoice — AI Analiz API",
+    "description": "DiagVoice Fusion gateway üzerindeki tüm AI analiz endpointleri.\n\n**Base URL (prod):** `https://aiapi.diagvoice.com`\n**Base URL (local):** `http://localhost:8085`\n\n**Kimlik doğrulama:** Analiz endpointleri için istemci tarafında `Authorization` header gerekmez.\n\n**Ses dosyası:** `multipart/form-data` isteklerinde `file` alanına `.wav`, `.mp3`, `.webm` vb. ses dosyası ekleyin. Postman'de dosya alanının yanındaki \"Select Files\" ile seçim yapın.\n\n**OpenAPI:** `GET {{baseUrl}}/openapi.json` veya `GET {{baseUrl}}/docs`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://aiapi.diagvoice.com",
+      "type": "string"
+    },
+    {
+      "key": "localBaseUrl",
+      "value": "http://localhost:8085",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string",
+      "description": "CMS admin JWT — yalnızca /admin/diagnostics/models-health için"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 — Genel",
+      "description": "Servis durumu ve OpenAPI bağlantıları.",
+      "item": [
+        {
+          "name": "GET / — Servis Bilgisi",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/",
+            "description": "Fusion servisinin bağımlılık URL'lerini, proxy haritasını ve OpenAPI linklerini döndürür."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"Fusion service. POST audio to /analyze-fused.\",\n  \"deps\": {\n    \"voice_to_text\": \"http://localhost:8051/transcribe\",\n    \"text_to_sentiment\": \"http://localhost:8050/analyze\",\n    \"voice_to_sentiment\": \"http://localhost:8052/analyze-audio\",\n    \"disease_service\": \"http://localhost:8054/analyze-disease\",\n    \"mental_fitness\": \"http://localhost:8055/analyze-mental\",\n    \"age_gender\": \"http://localhost:8056/analyze-age-gender\",\n    \"depression_service\": \"http://localhost:8057/analyze-depression\",\n    \"benchmark_inference\": \"http://127.0.0.1:8053\"\n  },\n  \"openapi\": {\n    \"swagger_ui\": \"/docs\",\n    \"redoc\": \"/redoc\",\n    \"openapi_json\": \"/openapi.json\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 — Birleşik Analiz",
+      "description": "Birden fazla model çıktısını tek istekte birleştiren endpointler.",
+      "item": [
+        {
+          "name": "POST /analyze-fused — Tam Pipeline",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "description": "Ses dosyası (zorunlu). Örn: sample.wav",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "speech_language",
+                  "value": "tr",
+                  "description": "STT dili: tr | en | ar (opsiyonel, varsayılan: tr)",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-fused",
+            "description": "STT + metin duygu + ses emosyonu + hastalık (WURSS) + mental fitness + yaş/cinsiyet + depresyon + benchmark v2 + 4-sınıf emosyon füzyonu. Ana istemci endpointi."
+          },
+          "response": [
+            {
+              "name": "200 — Tam Yanıt Örneği",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"text\": \"Bugün kendimi iyi hissediyorum.\",\n  \"text_error\": null,\n  \"text_sentiment\": { \"sentiment\": \"POSITIVE\", \"score\": 0.99 },\n  \"text_sentiment_error\": null,\n  \"audio\": {\n    \"pred_id\": 2,\n    \"pred_label\": \"happiness\",\n    \"probs\": [0.03, 0.08, 0.84, 0.05],\n    \"intensity\": 0.77,\n    \"duration_sec\": 9.8,\n    \"num_segments\": 5\n  },\n  \"audio_error\": null,\n  \"disease\": {\n    \"pred_id\": 0,\n    \"pred_label\": \"healthy\",\n    \"probs\": [0.81, 0.19],\n    \"labels\": { \"0\": \"healthy\", \"1\": \"sick\" }\n  },\n  \"disease_error\": null,\n  \"mental_fitness\": {\n    \"pred_id\": 0,\n    \"pred_label\": \"healthy\",\n    \"probs\": [0.73, 0.27],\n    \"mental_fitness_score\": 73.0\n  },\n  \"mental_fitness_error\": null,\n  \"age_gender\": {\n    \"gender\": { \"pred_label\": \"male\", \"probs\": [0.21, 0.79] },\n    \"agebin\": { \"pred_label\": \"26-35\", \"probs\": [0.05, 0.18, 0.62, 0.15] }\n  },\n  \"age_gender_error\": null,\n  \"depression\": {\n    \"pred_id\": 0,\n    \"pred_label\": \"saglikli\",\n    \"final_prob_depression\": 0.22,\n    \"risk_level\": \"dusuk\"\n  },\n  \"depression_error\": null,\n  \"benchmark_v2\": {\n    \"mode\": \"scalar_hgb\",\n    \"positive_class_probability\": 0.31,\n    \"threshold_tuned\": 0.5,\n    \"predicted_class\": 0\n  },\n  \"benchmark_v2_error\": null,\n  \"valence_text\": 0.91,\n  \"valence_audio\": 0.44,\n  \"confidence\": {\n    \"text\": 0.82,\n    \"audio\": 0.71,\n    \"disagreement\": 0.47,\n    \"dynamic_fusion\": true\n  },\n  \"fused\": {\n    \"valence\": 0.88,\n    \"label\": \"POSITIVE\",\n    \"w_text\": 0.91\n  },\n  \"unified_emotion\": {\n    \"pred_label\": \"happiness\",\n    \"pred_id\": 2,\n    \"probs\": [0.08, 0.07, 0.72, 0.13],\n    \"agreement\": \"medium\",\n    \"sources\": {\n      \"text\": { \"sentiment\": \"Positive\", \"score\": 0.91 },\n      \"audio\": { \"pred_label\": \"happiness\", \"intensity\": 0.77 }\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /togg-analyze — Ses Emosyonu + Hastalık",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "description": "Ses dosyası (zorunlu)",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/togg-analyze",
+            "description": "Paralel olarak ses emosyonu ve WURSS hastalık analizi. STT veya diğer modeller çalıştırılmaz."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"audio\": {\n    \"pred_label\": \"happiness\",\n    \"probs\": [0.03, 0.08, 0.84, 0.05],\n    \"intensity\": 0.77\n  },\n  \"audio_error\": null,\n  \"disease\": {\n    \"pred_label\": \"healthy\",\n    \"probs\": [0.81, 0.19]\n  },\n  \"disease_error\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-emotion-fusion — Metin+Ses Emosyon Birleşimi",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text_sentiment\": {\n    \"sentiment\": \"Positive\",\n    \"score\": 0.91\n  },\n  \"audio\": {\n    \"probs\": [0.55, 0.15, 0.20, 0.10],\n    \"intensity\": 0.6,\n    \"pred_label\": \"sadness\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-emotion-fusion",
+            "description": "STT/ses analizi çalıştırmadan, mevcut metin duygu ve ses emosyon sonuçlarını 4-sınıf (sadness, fear, happiness, anger) uzayında birleştirir. En az `text_sentiment` veya `audio` gerekir."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"unified_emotion\": {\n    \"pred_label\": \"happiness\",\n    \"pred_id\": 2,\n    \"probs\": [0.08, 0.07, 0.72, 0.13],\n    \"agreement\": \"medium\",\n    \"disagreement\": 0.31,\n    \"w_text\": 0.58\n  },\n  \"valence_text\": 0.91,\n  \"valence_audio\": 0.35,\n  \"confidence\": {\n    \"text\": 0.82,\n    \"audio\": 0.71,\n    \"disagreement\": 0.56,\n    \"dynamic_fusion\": true\n  },\n  \"fused\": {\n    \"valence\": 0.72,\n    \"label\": \"POSITIVE\",\n    \"w_text\": 0.58\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-emotion-fusion — Yalnızca Metin",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text_sentiment\": {\n    \"sentiment\": \"Negative\",\n    \"score\": 0.87\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-emotion-fusion",
+            "description": "Tek modality: yalnızca metin duygu sonucu ile emosyon füzyonu."
+          }
+        },
+        {
+          "name": "POST /analyze-emotion-fusion — Yalnızca Ses",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audio\": {\n    \"probs\": [0.10, 0.05, 0.75, 0.10],\n    \"intensity\": 0.82,\n    \"pred_label\": \"happiness\",\n    \"pred_id\": 2\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-emotion-fusion",
+            "description": "Tek modality: yalnızca ses emosyon sonucu ile füzyon. probs sırası: sadness, fear, happiness, anger."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Metin Analizi",
+      "description": "Metin tabanlı duygu, psikolojik sinyal ve transkript doğrulama.",
+      "item": [
+        {
+          "name": "POST /analyze-text-sentiment — Metin Duygu",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Bugün kendimi iyi hissediyorum, enerjim yüksek.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-text-sentiment",
+            "description": "Metin duygu analizi (POSITIVE/NEGATIVE). Genelde STT çıktısı veya kullanıcı metni üzerinde çalışır."
+          },
+          "response": [
+            {
+              "name": "200 — Pozitif",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"sentiment\": \"POSITIVE\",\n  \"score\": 0.99\n}"
+            },
+            {
+              "name": "200 — Negatif",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"sentiment\": \"NEGATIVE\",\n  \"score\": 0.94\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-turkish-psych-signals — Türkçe Psik Sinyaller",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Kendimi çok yorgun hissediyorum, hiçbir şey yapmak istemiyorum.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-turkish-psych-signals",
+            "description": "Türkçe psikolojik sinyal sınıflandırıcısı (HuggingFace). /analyze-fused içinde çalışmaz; wellness chat veya doğrudan çağrı için."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"text\": \"Kendimi çok yorgun hissediyorum, hiçbir şey yapmak istemiyorum.\",\n  \"predictions\": [\n    { \"label_id\": \"3\", \"score\": 0.42, \"category_name_tr\": \"Yorgunluk\" },\n    { \"label_id\": \"1\", \"score\": 0.28, \"category_name_tr\": \"Üzüntü\" }\n  ],\n  \"top_prediction\": {\n    \"label_id\": \"3\",\n    \"score\": 0.42,\n    \"category_name_tr\": \"Yorgunluk\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-mental-fitness/validate-transcript-meaning — Transkript Doğrulama",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Bugün işte çok stresli bir gün geçirdim ama akşam rahatladım.\",\n  \"language\": \"turkish\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/analyze-mental-fitness/validate-transcript-meaning",
+            "description": "STT metninin anlamlı olup olmadığını doğrular. language: turkish | english | arabic vb."
+          },
+          "response": [
+            {
+              "name": "200 — Anlamlı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"meaningful\": true,\n  \"reason\": \"Metin tutarlı ve anlaşılır.\",\n  \"validation_skipped\": false\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 — Ses Analizi",
+      "description": "Ses dosyası üzerinde çalışan tek-modelli analiz endpointleri.",
+      "item": [
+        {
+          "name": "POST /analyze-voice-to-text — STT (Whisper)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "description": "Ses dosyası (zorunlu)",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "speech_language",
+                  "value": "tr",
+                  "description": "tr | en | ar (opsiyonel)",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-voice-to-text",
+            "description": "Konuşmadan metne dönüştürme (Whisper STT)."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"text\": \"Bugün kendimi daha iyi hissediyorum.\",\n  \"language\": \"tr\",\n  \"language_auto_detected\": false\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-voice-sentiment — Ses Emosyonu (v1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-voice-sentiment",
+            "description": "4-sınıf ses emosyonu v1 (WavLM): sadness, fear, happiness, anger."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"pred_id\": 2,\n  \"pred_label\": \"happiness\",\n  \"probs\": [0.03, 0.08, 0.84, 0.05],\n  \"intensity\": 0.77,\n  \"duration_sec\": 9.8,\n  \"num_segments\": 5,\n  \"labels\": {\n    \"0\": \"sadness\",\n    \"1\": \"fear\",\n    \"2\": \"happiness\",\n    \"3\": \"anger\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-emotion-v2 — Emosyon v2",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" },
+                { "key": "language", "value": "turkish", "type": "text" },
+                { "key": "transcript", "value": "", "type": "text", "disabled": true }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/analyze-emotion-v2?include_branches=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["analyze-emotion-v2"],
+              "query": [{ "key": "include_branches", "value": "false" }]
+            },
+            "description": "Multimodal stacking emosyon v2: Whisper + E5 + WavLM + akustik. /analyze-fused içinde çalışmaz."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"prediction\": \"happiness\",\n  \"confidence\": 0.91,\n  \"probabilities\": {\n    \"anger\": 0.02,\n    \"fear\": 0.03,\n    \"happiness\": 0.91,\n    \"sadness\": 0.04\n  },\n  \"transcript\": \"Bugün kendimi oldukça iyi hissediyorum.\",\n  \"duration_seconds\": 18.42,\n  \"processing_time_ms\": 5342.18\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-depression — Depresyon",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-depression",
+            "description": "Ses tabanlı depresyon risk analizi. Ana metrik: final_prob_depression."
+          },
+          "response": [
+            {
+              "name": "200 — Depresyon Riski",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"pred_id\": 1,\n  \"pred_label\": \"depresyon\",\n  \"risk_level\": \"yuksek\",\n  \"final_prob_depression\": 0.78,\n  \"reliability\": \"orta\",\n  \"segment_count\": 8,\n  \"threshold\": 0.5,\n  \"segment_probs\": [0.71, 0.82, 0.76],\n  \"labels\": { \"0\": \"saglikli\", \"1\": \"depresyon\" }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-disease — WURSS Hastalık",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-disease",
+            "description": "WURSS tabanlı sağlıklı/hasta (healthy/sick) sınıflandırması."
+          },
+          "response": [
+            {
+              "name": "200 — Sağlıklı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"pred_id\": 0,\n  \"pred_label\": \"healthy\",\n  \"probs\": [0.81, 0.19],\n  \"labels\": { \"0\": \"healthy\", \"1\": \"sick\" }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-mental-fitness — Mental Fitness",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-mental-fitness",
+            "description": "Ses tabanlı mental fitness skoru (0-100 ölçeği)."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"pred_id\": 0,\n  \"pred_label\": \"healthy\",\n  \"probs\": [0.73, 0.27],\n  \"mental_fitness_score\": 73.0\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-age-gender — Yaş & Cinsiyet",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-age-gender",
+            "description": "Ses dosyasından cinsiyet ve yaş aralığı tahmini."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"gender\": {\n    \"pred_label\": \"male\",\n    \"probs\": [0.21, 0.79],\n    \"source\": \"ready_model\"\n  },\n  \"agebin\": {\n    \"pred_label\": \"26-35\",\n    \"probs\": [0.05, 0.18, 0.62, 0.15]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 — Füzyon & Benchmark",
+      "description": "Metin+ses valence füzyonu ve iş sağlığı benchmark modeli.",
+      "item": [
+        {
+          "name": "POST /analyze-text-audio-fusion — Metin+Ses Valence",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "text",
+                  "value": "Kendimi biraz yorgun ama iyi hissediyorum.",
+                  "description": "Analiz edilecek metin (zorunlu)",
+                  "type": "text"
+                },
+                {
+                  "key": "audio",
+                  "description": "Ses dosyası — alan adı 'audio' (zorunlu)",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "fusion_mode",
+                  "value": "dynamic",
+                  "description": "dynamic (varsayılan) veya fixed",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-text-audio-fusion",
+            "description": "Metin duygu ve ses valence skorlarını birleştirir. NOT: Ses alan adı `audio` (diğer endpointlerde `file`)."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"text\": {\n    \"sentiment\": \"POSITIVE\",\n    \"score\": 0.93,\n    \"valence_text\": 0.93\n  },\n  \"audio\": {\n    \"valence_audio\": 0.44\n  },\n  \"fusion\": {\n    \"mode\": \"dynamic\",\n    \"w_text\": 0.91,\n    \"valence_fused\": 0.88\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /analyze-benchmark-v2 — İş Sağlığı Benchmark",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "description": "Ses dosyası (zorunlu)",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "transcript",
+                  "value": "Bugün kendimi iyi hissediyorum.",
+                  "description": "Opsiyonel STT/transkript metni",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/analyze-benchmark-v2",
+            "description": "İş sağlığı benchmark modeli (scalar HGB). INFERENCE_API_URL boşsa 503 döner."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"mode\": \"scalar_hgb\",\n  \"positive_class_probability\": 0.31,\n  \"threshold_tuned\": 0.5,\n  \"predicted_class\": 0,\n  \"class_names_hint\": \"0=sağlıklı, 1=tanılı risk\"\n}"
+            },
+            {
+              "name": "503 — Servis Devre Dışı",
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"detail\": \"benchmark_v2 disabled (INFERENCE_API_URL empty)\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 — Wellness AI (LLM)",
+      "description": "OpenAI tabanlı wellness companion sohbet. Sunucuda OPENAI_API_KEY gerekir.",
+      "item": [
+        {
+          "name": "POST /wellness/companion/chat — Metin Modu",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Bugün işte çok stresliydim, kendimi nasıl toparlarım?\"\n    }\n  ],\n  \"locale\": \"tr\",\n  \"session_id\": \"demo-session-001\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/wellness/companion/chat",
+            "description": "Metin tabanlı wellness sohbeti. Gerektiğinde iç olarak /analyze-turkish-psych-signals çağrılır."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"Stresli günler sonrası kendinize zaman ayırmak önemli. Kısa bir yürüyüş veya derin nefes egzersizi deneyebilirsiniz.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /wellness/companion/chat — Çoklu Mesaj",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Merhaba, kendimi yorgun hissediyorum.\" },\n    { \"role\": \"assistant\", \"content\": \"Yorgunluk hissetmeniz normal. Biraz dinlenmeyi denediniz mi?\" },\n    { \"role\": \"user\", \"content\": \"Evet ama hâlâ bitkinim.\" }\n  ],\n  \"locale\": \"tr\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/wellness/companion/chat",
+            "description": "Sohbet geçmişi ile devam eden metin modu."
+          }
+        },
+        {
+          "name": "POST /wellness/companion/chat — Ses Modu",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "description": "Ses kaydı (file, audio veya recording alanı kabul edilir)",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "messages",
+                  "value": "[{\"role\":\"user\",\"content\":\"Sesli mesaj gönderiyorum.\"}]",
+                  "description": "JSON string olarak mesaj dizisi (zorunlu)",
+                  "type": "text"
+                },
+                {
+                  "key": "locale",
+                  "value": "tr",
+                  "type": "text"
+                },
+                {
+                  "key": "session_id",
+                  "value": "voice-session-001",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/wellness/companion/chat",
+            "description": "Ses modu: STT + mental fitness + transkript doğrulama + LLM yanıtı. Max 15 MB."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"Sesli mesajınızı aldım. Kendinizi yorgun hissetmeniz anlaşılır bir durum...\",\n  \"transcript\": \"Bugün çok yorgunum ve dinlenmek istiyorum.\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6 — Admin (Model Sağlık)",
+      "description": "CMS admin paneli — tüm AI mikroservislerinin sağlık durumu. Bearer JWT gerekir.",
+      "item": [
+        {
+          "name": "GET /admin/diagnostics/models-health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "description": "CMS admin JWT — POST /auth/login ile alınır"
+              }
+            ],
+            "url": "{{baseUrl}}/admin/diagnostics/models-health",
+            "description": "Tüm iç AI mikroservislerini (STT, duygu, emosyon, depresyon vb.) probe eder."
+          },
+          "response": [
+            {
+              "name": "200 — Başarılı",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"checked_at\": \"2026-07-10T10:00:00Z\",\n  \"services\": [\n    { \"id\": \"text_sentiment\", \"label\": \"Metin Duygu\", \"status\": \"ok\", \"latency_ms\": 45 },\n    { \"id\": \"voice_to_text\", \"label\": \"STT\", \"status\": \"ok\", \"latency_ms\": 120 },\n    { \"id\": \"voice_sentiment\", \"label\": \"Ses Emosyonu\", \"status\": \"ok\", \"latency_ms\": 89 }\n  ],\n  \"summary\": { \"ok\": 8, \"warn\": 0, \"fail\": 0, \"skipped\": 1 }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7 — İç Mikroservisler (Doğrudan)",
+      "description": "Yerel geliştirme için doğrudan mikroservis çağrıları. Prod'da 127.0.0.1'e bağlıdır, dışarıdan erişilemez.",
+      "item": [
+        {
+          "name": "8050 — POST /analyze (Metin Duygu)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Bugün harika bir gün geçirdim.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "http://localhost:8050/analyze"
+          }
+        },
+        {
+          "name": "8050 — POST /analyze_fusion (Metin+Ses)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "text", "value": "Kendimi iyi hissediyorum.", "type": "text" },
+                { "key": "audio", "type": "file", "src": "" },
+                { "key": "fusion_mode", "value": "dynamic", "type": "text" }
+              ]
+            },
+            "url": "http://localhost:8050/analyze_fusion"
+          }
+        },
+        {
+          "name": "8051 — POST /transcribe (STT)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" },
+                { "key": "language", "value": "tr", "type": "text" }
+              ]
+            },
+            "url": "http://localhost:8051/transcribe"
+          }
+        },
+        {
+          "name": "8052 — POST /analyze-audio (Ses Emosyonu)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": "" }]
+            },
+            "url": "http://localhost:8052/analyze-audio"
+          }
+        },
+        {
+          "name": "8053 — POST /predict (Benchmark)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "audio", "type": "file", "src": "" },
+                { "key": "transcript", "value": "", "type": "text" }
+              ]
+            },
+            "url": "http://localhost:8053/predict",
+            "description": "NOT: Alan adı 'audio' (Fusion'daki 'file' değil)."
+          }
+        },
+        {
+          "name": "8053 — GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8053/health"
+          }
+        },
+        {
+          "name": "8054 — POST /analyze-disease",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": "" }]
+            },
+            "url": "http://localhost:8054/analyze-disease"
+          }
+        },
+        {
+          "name": "8055 — POST /analyze-mental",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": "" }]
+            },
+            "url": "http://localhost:8055/analyze-mental"
+          }
+        },
+        {
+          "name": "8055 — POST /validate-transcript-meaning",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Merhaba nasılsınız?\",\n  \"language\": \"turkish\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "http://localhost:8055/validate-transcript-meaning"
+          }
+        },
+        {
+          "name": "8056 — POST /analyze-age-gender",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": "" }]
+            },
+            "url": "http://localhost:8056/analyze-age-gender"
+          }
+        },
+        {
+          "name": "8057 — POST /analyze-depression",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": "" }]
+            },
+            "url": "http://localhost:8057/analyze-depression"
+          }
+        },
+        {
+          "name": "8058 — POST /analyze (Türkçe Psik)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Kendimi çok yalnız hissediyorum.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "http://localhost:8058/analyze"
+          }
+        },
+        {
+          "name": "8058 — GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8058/health"
+          }
+        }
+      ]
+    }
+  ]
+}

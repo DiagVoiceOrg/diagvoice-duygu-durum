@@ -77,6 +77,7 @@ const GENDER_COLOR = {
   male: '#3b82f6',
   female: '#ec4899',
 };
+const EMOTION_V2_KEYS = ['sadness', 'fear', 'happiness', 'anger'];
 const EMOTION_DETAIL_COLORS = {
   sadness: '#6366f1',
   fear: '#8b5cf6',
@@ -98,12 +99,14 @@ const AGE_DISPLAY_SHIFT_BINS = 1;
  * @param {string} [props.transcribedText]
  * @param {string|null} [props.textSttError]
  * @param {string|null} [props.audioEmotionError]
+ * @param {string|null} [props.audioEmotionV2Error]
  * @param {string|null} [props.diseaseError]
  * @param {string|null} [props.benchmarkV2Error]
  * @param {string|null} [props.mentalFitnessError]
  * @param {string|null} [props.depressionError]
  * @param {string|null} [props.sentimentPipelineError]
  * @param {object|null} [props.audioEmotionResult]
+ * @param {object|null} [props.audioEmotionV2Result]
  * @param {object|null} [props.diseaseResult]
  * @param {object|null} [props.benchmarkV2Result]
  * @param {object|null} [props.mentalFitnessResult]
@@ -120,12 +123,14 @@ export default function ModelDetailsPage({
   transcribedText = '',
   textSttError = null,
   audioEmotionError = null,
+  audioEmotionV2Error = null,
   diseaseError = null,
   benchmarkV2Error = null,
   mentalFitnessError = null,
   depressionError = null,
   sentimentPipelineError = null,
   audioEmotionResult,
+  audioEmotionV2Result,
   diseaseResult,
   benchmarkV2Result,
   mentalFitnessResult,
@@ -273,6 +278,68 @@ export default function ModelDetailsPage({
                     label={emotionLabels[idx] || classLabelForIndex(idx)}
                     value={prob}
                     color={emotionColors[idx] || '#94a3b8'}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            )}
+          </DetailCard>
+        );
+      }
+
+      case 'audio_emotion_v2': {
+        if (!audioEmotionV2Result && !audioEmotionV2Error) {
+          return (
+            <DetailCard key={cardId} title={`${copy.displayTitle}`}>
+              <p className="md-detail-muted">{demoT(lang, 'mdEmptyPrompt')}</p>
+            </DetailCard>
+          );
+        }
+        const v2Probs = audioEmotionV2Result?.probabilities || {};
+        return (
+          <DetailCard
+            key={cardId}
+            title={`${copy.displayTitle}`}
+            subtitle={demoT(lang, 'mdEmotionV2Intro')}
+            warn={audioEmotionV2Error || null}
+          >
+            <h4 className="md-detail-h4">{demoT(lang, 'mdPredSummary')}</h4>
+            <DetailKv
+              label={demoT(lang, 'mdPredLabel')}
+              value={emotionUiLabel(lang, audioEmotionV2Result?.prediction)}
+            />
+            <DetailKv
+              label={demoT(lang, 'confidenceBadge')}
+              value={
+                typeof audioEmotionV2Result?.confidence === 'number'
+                  ? formatPct01FromUnit(audioEmotionV2Result.confidence, 1)
+                  : undefined
+              }
+            />
+            {typeof audioEmotionV2Result?.duration_seconds === 'number' ? (
+              <DetailKv
+                label={demoT(lang, 'mdDurationSec')}
+                value={String(audioEmotionV2Result.duration_seconds)}
+              />
+            ) : null}
+            {audioEmotionV2Result?.transcript ? (
+              <>
+                <h4 className="md-detail-h4">{demoT(lang, 'mdEmotionV2Transcript')}</h4>
+                <blockquote className="md-transcript-quote">
+                  &ldquo;{audioEmotionV2Result.transcript}&rdquo;
+                </blockquote>
+              </>
+            ) : null}
+            <h4 className="md-detail-h4">{demoT(lang, 'mdClassProbsFull')}</h4>
+            {Object.keys(v2Probs).length > 0 ? (
+              <div className="prob-section">
+                {EMOTION_V2_KEYS.map((key) => (
+                  <ProbBarRow
+                    key={key}
+                    label={emotionUiLabel(lang, key)}
+                    value={v2Probs[key] ?? 0}
+                    color={getEmotionColor(key)}
                   />
                 ))}
               </div>

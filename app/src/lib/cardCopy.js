@@ -8,6 +8,7 @@ export const DEFAULT_CARD_ORDER = [
   'transcript',
   'sentiment',
   'audio_emotion',
+  'audio_emotion_v2',
   'unified_emotion',
   'disease',
   'benchmark_v2',

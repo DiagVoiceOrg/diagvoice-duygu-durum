@@ -20,6 +20,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DEPRESSION_SERVICE_PORT=8057 \
     TURKISH_PSYCH_CLASSIFIER_PORT=8058 \
     TURKISH_PSYCH_WEIGHTS_PATH=/app/models/mental-fitness-forgpt.safetensors \
+    EMOTION_V2_PORT=8059 \
+    EMOTION_V2_MODEL_PATH=/app/models/final_multimodal_stacking_model.joblib \
     FUSION_PORT=8085 \
     TEXT_TO_SENTIMENT_URL=http://127.0.0.1:8050/analyze \
     VOICE_TO_TEXT_URL=http://127.0.0.1:8051/transcribe \
@@ -29,6 +31,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AGE_GENDER_URL=http://127.0.0.1:8056/analyze-age-gender \
     DEPRESSION_SERVICE_URL=http://127.0.0.1:8057/analyze-depression \
     TURKISH_PSYCH_CLASSIFIER_URL=http://127.0.0.1:8058/analyze \
+    EMOTION_V2_URL=http://127.0.0.1:8059/analyze-audio \
     INFERENCE_API_URL=http://127.0.0.1:8053
 
 WORKDIR /app
@@ -59,6 +62,7 @@ COPY mental_fitness /app/mental_fitness
 COPY age-gender-model /app/age-gender-model
 COPY depression_service /app/depression_service
 COPY mental_fitness_turkish_psych_classifier /app/mental_fitness_turkish_psych_classifier
+COPY emotion_v2 /app/emotion_v2
 COPY models /app/models
 COPY test-data /app/test-data
 

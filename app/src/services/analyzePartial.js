@@ -173,10 +173,38 @@ async function enrichWithUnifiedFusion(result, wantsUnifiedFusion, profileOrder)
 
 const KNOWN_CARD_IDS = new Set(CARD_IDS);
 
+/** analyze-fused ile karşılaştırılacak kartlar (fused dışı / ayrı proxy olanlar hariç) */
+const ANALYZE_FUSED_CARD_IDS = CARD_IDS.filter((id) => id !== 'audio_emotion_v2');
+
+function mapSttLangToEmotionV2Language(sttLang) {
+  const map = { tr: 'turkish', en: 'english', ar: 'arabic' };
+  return map[String(sttLang || 'tr').toLowerCase()] || 'turkish';
+}
+
+async function postEmotionV2(audioData, sttLanguage, transcript) {
+  const fd = buildFormData(audioData);
+  fd.append('language', mapSttLangToEmotionV2Language(sttLanguage));
+  const t = (transcript ?? '').trim();
+  if (t) {
+    fd.append('transcript', t);
+  }
+  const origin = getFusionOrigin();
+  const { data } = await axios.post(`${origin}/analyze-emotion-v2`, fd, {
+    timeout: Number.isFinite(API_TIMEOUT_MS) ? API_TIMEOUT_MS : 600000,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
 /** Profildeki tüm bilinen kartlar varsa tek analyze-fused (valence/fusion dahil). */
 function shouldUseAnalyzeFused(uniqueIds) {
-  const s = new Set(uniqueIds.filter((id) => KNOWN_CARD_IDS.has(id)));
-  return s.size === CARD_IDS.length && CARD_IDS.every((id) => s.has(id));
+  if (uniqueIds.includes('audio_emotion_v2')) {
+    return false;
+  }
+  const s = new Set(uniqueIds.filter((id) => ANALYZE_FUSED_CARD_IDS.includes(id)));
+  return s.size === ANALYZE_FUSED_CARD_IDS.length && ANALYZE_FUSED_CARD_IDS.every((id) => s.has(id));
 }
 
 function needsVoiceToText(uniqueIds, wantsUnifiedFusion = false) {
@@ -222,8 +250,11 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
   let benchmarkV2Err = null;
   let textResult = null;
   let textErr = null;
+  let audioEmotionV2Result = null;
+  let audioEmotionV2Err = null;
 
   const sttNeeded = needsVoiceToText(uniqueIds, wantsUnifiedFusion);
+  const wantsEmotionV2 = uniqueIds.includes('audio_emotion_v2');
 
   const phase1 = [];
 
@@ -282,6 +313,18 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
         }),
     );
   }
+  if (wantsEmotionV2 && !sttNeeded) {
+    phase1.push(
+      postEmotionV2(audioData, sttLang, null)
+        .then((d) => {
+          audioEmotionV2Result = d;
+        })
+        .catch((e) => {
+          audioEmotionV2Err =
+            e.response?.data ? JSON.stringify(e.response.data) : e.message || 'Emosyon v2 hatası';
+        }),
+    );
+  }
 
   await Promise.all(phase1);
 
@@ -322,6 +365,19 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
     );
   }
 
+  if (wantsEmotionV2 && sttNeeded) {
+    phase2.push(
+      postEmotionV2(audioData, sttLang, sttErr ? null : transcript)
+        .then((d) => {
+          audioEmotionV2Result = d;
+        })
+        .catch((e) => {
+          audioEmotionV2Err =
+            e.response?.data ? JSON.stringify(e.response.data) : e.message || 'Emosyon v2 hatası';
+        }),
+    );
+  }
+
   await Promise.all(phase2);
 
   let textSentimentForResponse = normalizeTextSentiment(textResult);
@@ -332,6 +388,8 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
       text_error: sttErr,
       audio: audioResult,
       audio_error: audioErr,
+      audio_emotion_v2: audioEmotionV2Result,
+      audio_emotion_v2_error: audioEmotionV2Err,
       disease: diseaseResult,
       disease_error: diseaseErr,
       mental_fitness: mentalFitnessResult,

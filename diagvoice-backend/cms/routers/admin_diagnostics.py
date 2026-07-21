@@ -66,6 +66,15 @@ def _env_upstream_urls() -> dict[str, tuple[str, str]]:
         _tp_port = int(os.environ.get("TURKISH_PSYCH_CLASSIFIER_PORT", "8058"))
         turkish_psych_health = _ipv4_loopback_url(f"http://127.0.0.1:{_tp_port}/health")
 
+    _ev2_h_raw = os.environ.get("EMOTION_V2_HEALTH_URL")
+    if _ev2_h_raw is not None and not str(_ev2_h_raw).strip():
+        emotion_v2_health = ""
+    elif _ev2_h_raw and str(_ev2_h_raw).strip():
+        emotion_v2_health = _ipv4_loopback_url(str(_ev2_h_raw).strip())
+    else:
+        _ev2_port = int(os.environ.get("EMOTION_V2_PORT", "8059"))
+        emotion_v2_health = _ipv4_loopback_url(f"http://127.0.0.1:{_ev2_port}/health")
+
     return {
         "text_sentiment": ("Metin duygu analizi", _service_root(tts)),
         "voice_to_text": ("Ses → metin (STT)", _service_root(vtt)),
@@ -75,6 +84,7 @@ def _env_upstream_urls() -> dict[str, tuple[str, str]]:
         "age_gender": ("Yaş & cinsiyet", _service_root(ag)),
         "depression": ("Depresyon skoru", _service_root(dep)),
         "turkish_psych": ("Türkçe psik sinyal (HF metin)", turkish_psych_health),
+        "emotion_v2": ("Emosyon v2 (multimodal stacking)", emotion_v2_health),
         "benchmark": ("İş sağlığı (benchmark)", f"{inference}/health" if inference else ""),
     }
 
@@ -144,6 +154,16 @@ async def _probe_get(client: httpx.AsyncClient, service_id: str, label: str, url
                     "TURKISH_PSYCH_WEIGHTS_PATH ve servis loglarını kontrol edin."
                 )
                 out["status"] = "fail"
+        elif service_id == "emotion_v2":
+            ok = ok and isinstance(preview, dict) and preview.get("ok") is True
+            if ok:
+                out["status"] = "ok"
+            else:
+                err = preview.get("error") if isinstance(preview, dict) else None
+                out["detail"] = err if err else (
+                    "Emosyon v2 model yüklenemedi. EMOTION_V2_MODEL_PATH ve servis loglarını kontrol edin."
+                )
+                out["status"] = "fail"
         else:
             if ok:
                 out["status"] = "ok"
@@ -154,7 +174,7 @@ async def _probe_get(client: httpx.AsyncClient, service_id: str, label: str, url
         # benchmark / turkish_psych disinda body'de bilinen hata
         if preview and isinstance(preview, dict) and preview.get("error"):
             msg = str(preview.get("error"))[:480]
-            if service_id not in ("benchmark", "turkish_psych") or preview.get("ok") is False:
+            if service_id not in ("benchmark", "turkish_psych", "emotion_v2") or preview.get("ok") is False:
                 out["detail"] = msg
                 if preview.get("ok") is False or r.status_code >= 400:
                     out["status"] = "fail"
@@ -191,6 +211,7 @@ async def models_health(_: Annotated[dict, Depends(require_admin)]) -> dict[str,
         "age_gender",
         "depression",
         "turkish_psych",
+        "emotion_v2",
         "benchmark",
     ]
     async with httpx.AsyncClient(timeout=timeout) as client:
