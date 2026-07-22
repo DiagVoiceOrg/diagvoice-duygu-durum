@@ -13,6 +13,7 @@ services:
     env_file:
       - .env
     environment:
+      HF_HUB_DISABLE_XET: "1"
       CMS_ENABLED: ${CMS_ENABLED:-1}
       MONGO_URI: ${MONGO_URI:?MONGO_URI tanımlı olmalı — kök .env içinde harici Mongo bağlantı dizesi}
       MONGO_DB: ${MONGO_DB:-diagvoice_cms}
