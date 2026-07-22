@@ -7,13 +7,14 @@ const VOICE_EMOTION_URL = () => `${FUSION()}/analyze-voice-sentiment`;
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 const REQUEST_MS = Number.isFinite(TIMEOUT_MS) ? TIMEOUT_MS : 600000;
 
-/** UI (turkish|english|arabic) → fusion STT Form `speech_language` (tr|en|ar) */
+/** UI (turkish|english|arabic|auto) → fusion STT Form `speech_language` (tr|en|ar|auto) */
 export function normalizeSpeechLanguageForStt(raw) {
   const s = String(raw ?? 'turkish').trim().toLowerCase();
   const map = {
     turkish: 'tr',
     english: 'en',
     arabic: 'ar',
+    auto: 'auto',
     tr: 'tr',
     en: 'en',
     ar: 'ar',

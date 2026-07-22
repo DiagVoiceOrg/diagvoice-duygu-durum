@@ -681,7 +681,7 @@ export default function DemoHome({
               aria-pressed={speechLang === L.id}
               disabled={!!pageError || isLoading}
             >
-              {L.label}
+              {L.id === 'auto' ? demoT(lang, 'speechLangAuto') : L.label}
             </button>
           ))}
         </div>

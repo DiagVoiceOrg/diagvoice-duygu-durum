@@ -2,26 +2,29 @@ from __future__ import annotations
 
 import gc
 import math
+import os
 import re
+import sys
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import httpx
 import joblib
 import librosa
 import numpy as np
 import opensmile
 import soundfile as sf
 import torch
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+from code.stt.language import normalize_speech_language_code, speech_language_to_form_value
 from sentence_transformers import SentenceTransformer
-from transformers import (
-    AutoFeatureExtractor,
-    AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
-    WavLMModel,
-    pipeline as hf_pipeline,
-)
+from transformers import AutoFeatureExtractor, WavLMModel
 
 
 LABELS = ("anger", "fear", "happiness", "sadness")
@@ -40,8 +43,8 @@ class RuntimeConfig:
     wavlm_chunk_seconds: float = 10.0
     wavlm_stride_seconds: float = 8.0
     wavlm_batch_size: int = 4
-    whisper_chunk_seconds: int = 30
-    whisper_batch_size: int = 4
+    stt_url: str = "http://127.0.0.1:8051/transcribe"
+    stt_timeout_sec: float = 900.0
     device: Optional[str] = None
     min_audio_seconds: float = 0.25
     max_audio_seconds: float = 300.0
@@ -374,42 +377,38 @@ class MultimodalEmotionPredictor:
             device=str(self.device),
         )
 
-        self.asr = None
-        self._whisper_model = None
-        self._whisper_processor = None
-        self._load_whisper()
-
-    def _load_whisper(self) -> None:
-        if self.asr is not None:
-            return
-
-        whisper_name = self.artifact.get(
-            "whisper_model",
+        self.stt_url = (
+            config.stt_url
+            or os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
+        ).strip()
+        self.stt_timeout_sec = float(config.stt_timeout_sec)
+        self.stt_model = os.environ.get(
+            "VOICE_TO_TEXT_MODEL",
             "openai/whisper-large-v3-turbo",
         )
-        dtype = torch.float16 if self.device.type == "cuda" else torch.float32
 
-        processor = AutoProcessor.from_pretrained(whisper_name)
-        model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            whisper_name,
-            dtype=dtype,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-        ).to(self.device)
-        model.eval()
+    def _transcribe_via_stt(
+        self,
+        audio_path: Path,
+        speech_language: Optional[str],
+    ) -> str:
+        form_language = speech_language_to_form_value(speech_language)
+        upload_name = audio_path.name or "audio.wav"
 
-        self._whisper_processor = processor
-        self._whisper_model = model
-        self.asr = hf_pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            dtype=dtype,
-            device=0 if self.device.type == "cuda" else -1,
-            chunk_length_s=self.config.whisper_chunk_seconds,
-            batch_size=self.config.whisper_batch_size,
-        )
+        with audio_path.open("rb") as handle:
+            with httpx.Client(timeout=self.stt_timeout_sec) as client:
+                response = client.post(
+                    self.stt_url,
+                    files={"file": (upload_name, handle, "application/octet-stream")},
+                    data={"language": form_language},
+                )
+                response.raise_for_status()
+                body = response.json()
+
+        if not isinstance(body, dict):
+            raise RuntimeError("STT servisi geçersiz JSON döndürdü.")
+
+        return str(body.get("text", "")).strip()
 
     @torch.inference_mode()
     def _extract_wavlm(
@@ -504,29 +503,6 @@ class MultimodalEmotionPredictor:
             for layer in layers
         }
 
-    def transcribe(
-        self,
-        waveform: np.ndarray,
-        language: Optional[str] = "turkish",
-    ) -> str:
-        if self.asr is None:
-            self._load_whisper()
-
-        generate_kwargs: Dict[str, Any] = {"task": "transcribe"}
-        if language:
-            generate_kwargs["language"] = language
-
-        result = self.asr(
-            {
-                "array": waveform,
-                "sampling_rate": self.config.sample_rate,
-            },
-            generate_kwargs=generate_kwargs,
-            return_timestamps=False,
-        )
-
-        return str(result.get("text", "")).strip()
-
     def encode_text(self, transcript: str) -> np.ndarray:
         text = transcript.strip() or "[ses anlaşılamadı]"
         formatted = f"Instruct: {TEXT_INSTRUCTION}\nQuery: {text}"
@@ -544,11 +520,12 @@ class MultimodalEmotionPredictor:
     def predict(
         self,
         audio_path: str | Path,
-        language: Optional[str] = "turkish",
+        speech_language: Optional[str] = "tr",
         transcript: Optional[str] = None,
     ) -> Dict[str, Any]:
+        audio_file = Path(audio_path)
         waveform, sample_rate = load_audio_mono(
-            audio_path,
+            audio_file,
             self.config.sample_rate,
         )
 
@@ -564,10 +541,11 @@ class MultimodalEmotionPredictor:
                 f"{self.config.max_audio_seconds:.0f} saniye."
             )
 
+        normalized_speech_language = normalize_speech_language_code(speech_language)
         resolved_transcript = (
             transcript.strip()
             if transcript and transcript.strip()
-            else self.transcribe(waveform, language=language)
+            else self._transcribe_via_stt(audio_file, normalized_speech_language)
         )
 
         text_vector = self.encode_text(resolved_transcript)
@@ -692,10 +670,8 @@ class MultimodalEmotionPredictor:
                 "wavlm_backbone",
                 "microsoft/wavlm-base-plus",
             ),
-            "whisper_model": self.artifact.get(
-                "whisper_model",
-                "openai/whisper-large-v3-turbo",
-            ),
+            "stt_url": self.stt_url,
+            "stt_model": self.stt_model,
             "text_encoder": self.artifact.get(
                 "text_encoder",
                 "intfloat/multilingual-e5-large-instruct",
@@ -705,9 +681,6 @@ class MultimodalEmotionPredictor:
 
     def close(self) -> None:
         for attribute in (
-            "asr",
-            "_whisper_model",
-            "_whisper_processor",
             "wavlm",
             "wavlm_extractor",
             "text_encoder",

@@ -19,6 +19,8 @@ from pydub import AudioSegment
 from starlette.concurrency import run_in_threadpool
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
+from code.stt.language import resolve_whisper_language
+
 app = fastapi.FastAPI()
 
 _cors_origins_raw = os.environ.get(
@@ -93,7 +95,7 @@ def _effective_num_beams() -> int:
 
 print("Starting server and loading model...")
 try:
-    model_id = os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small")
+    model_id = os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-large-v3-turbo")
     use_cuda = torch.cuda.is_available()
     device = "cuda" if use_cuda else "cpu"
     dtype = torch.float16 if use_cuda else torch.float32
@@ -183,30 +185,6 @@ def _load_audio_16k_mono(path: str) -> tuple[np.ndarray, int]:
         ) from e
     except Exception as e:
         raise RuntimeError(f"Could not decode audio file: {e}") from e
-
-
-def resolve_whisper_language(language: str | None) -> str | None:
-    """UI/Fusion kodunu Whisper dil adına çevirir. Boş veya auto → None (otomatik tespit)."""
-    if not language or not str(language).strip():
-        return None
-    key = str(language).strip().lower()
-    if key in {"auto", "detect", "automatic"}:
-        return None
-    mapping = {
-        "tr": "turkish",
-        "turkish": "turkish",
-        "türkçe": "turkish",
-        "turkce": "turkish",
-        "en": "english",
-        "english": "english",
-        "ingilizce": "english",
-        "ar": "arabic",
-        "arabic": "arabic",
-        "arab": "arabic",
-        "عربي": "arabic",
-        "العربية": "arabic",
-    }
-    return mapping.get(key, "turkish")
 
 
 def _preprocess_audio(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -467,7 +445,7 @@ async def root():
             "(turkish|english|arabic or tr|en|ar|auto). Default turkish."
         ),
         "defaults": {
-            "model": os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-small"),
+            "model": os.environ.get("VOICE_TO_TEXT_MODEL", "openai/whisper-large-v3-turbo"),
             "chunk_sec": STT_CHUNK_SEC,
             "chunk_overlap_sec": STT_CHUNK_OVERLAP_SEC,
             "num_beams": _effective_num_beams(),

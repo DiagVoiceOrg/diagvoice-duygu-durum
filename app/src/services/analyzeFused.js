@@ -13,10 +13,11 @@ const extFromMime = (mime) => {
   return 'wav';
 };
 
-/** Fusion/STT’nin beklediği kod: tr | en | ar */
+/** Fusion/STT'nin beklediği kod: tr | en | ar | auto */
 export function normalizeSpeechLanguageForStt(raw) {
   const s = String(raw ?? 'tr').trim().toLowerCase();
-  return s === 'en' || s === 'ar' ? s : 'tr';
+  if (s === 'en' || s === 'ar' || s === 'auto') return s;
+  return 'tr';
 }
 
 /** @param {Blob|File} audioData */

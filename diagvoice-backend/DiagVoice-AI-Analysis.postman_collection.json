@@ -339,7 +339,7 @@
               "mode": "formdata",
               "formdata": [
                 { "key": "file", "type": "file", "src": "" },
-                { "key": "language", "value": "turkish", "type": "text" },
+                { "key": "speech_language", "value": "tr", "type": "text", "description": "tr | en | ar | auto" },
                 { "key": "transcript", "value": "", "type": "text", "disabled": true }
               ]
             },
@@ -349,7 +349,7 @@
               "path": ["analyze-emotion-v2"],
               "query": [{ "key": "include_branches", "value": "false" }]
             },
-            "description": "Multimodal stacking emosyon v2: Whisper + E5 + WavLM + akustik. /analyze-fused içinde çalışmaz."
+            "description": "Multimodal stacking emosyon v2: merkezi STT (Whisper v3 turbo) + E5 + WavLM + akustik. /analyze-fused içinde çalışmaz."
           },
           "response": [
             {

@@ -53,16 +53,17 @@ def _ipv4_loopback_url(url: str) -> str:
     return re.sub(r"(?i)//localhost(?=:|/)", "//127.0.0.1", url.strip())
 
 
+from code.stt.language import normalize_speech_language_code, speech_language_to_form_value
+
+
 def _normalize_speech_language_for_stt(raw: Optional[str]) -> str:
-    """UI kodu (tr|en|ar) → voice_to_text Form `language`; STT tarafında Whisper diline çevrilir."""
-    s = (raw or "tr").strip().lower()
-    return s if s in {"tr", "en", "ar"} else "tr"
+    """UI kodu (tr|en|ar|auto) → standart speech_language kodu."""
+    return normalize_speech_language_code(raw)
 
 
 def _stt_language_form_value(raw: Optional[str]) -> str:
-    """Fusion → voice_to_text `language` form alanı (Whisper adları)."""
-    code = _normalize_speech_language_for_stt(raw)
-    return {"tr": "turkish", "en": "english", "ar": "arabic"}.get(code, "turkish")
+    """Fusion → voice_to_text `language` form alanı (Whisper adları veya auto)."""
+    return speech_language_to_form_value(raw)
 
 
 _CMS_ENABLED = os.environ.get("CMS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
@@ -847,7 +848,7 @@ async def root():
                 else "disabled (TURKISH_PSYCH_CLASSIFIER_URL empty)"
             ),
             "emotion_v2": (
-                "POST /analyze-emotion-v2 (multipart file, optional language/transcript) -> multimodal stacking emosyon v2"
+                "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2"
                 if EMOTION_V2_URL
                 else "disabled (EMOTION_V2_URL empty)"
             ),
@@ -899,7 +900,7 @@ async def proxy_analyze_depression(request: Request, file: UploadFile = File(...
 async def proxy_analyze_voice_to_text(
     request: Request,
     file: UploadFile = File(..., description="Ses dosyası"),
-    speech_language: str = Form("tr", description="Whisper dili: tr | en | ar"),
+    speech_language: str = Form("tr", description="Whisper dili: tr | en | ar | auto"),
 ):
     lg = _stt_language_form_value(speech_language)
     return await _proxy_file_upload(
@@ -966,12 +967,13 @@ async def proxy_analyze_voice_sentiment(request: Request, file: UploadFile = Fil
 async def proxy_analyze_emotion_v2(
     request: Request,
     file: UploadFile = File(..., description="Ses dosyası"),
-    language: str = Form("turkish", description="turkish, english veya boş"),
-    transcript: Optional[str] = Form(None, description="Verilirse Whisper atlanır"),
+    speech_language: str = Form("tr", description="STT dili: tr | en | ar | auto"),
+    language: Optional[str] = Form(None, description="(Geriye dönük) turkish | english | arabic | auto"),
+    transcript: Optional[str] = Form(None, description="Verilirse STT atlanır"),
     include_branches: bool = Query(False, description="Model dallarının olasılıklarını yanıta ekler"),
 ):
     """
-    Multimodal stacking emosyon v2 (Whisper + E5 + WavLM + akustik).
+    Multimodal stacking emosyon v2 (merkezi STT + E5 + WavLM + akustik).
     `/analyze-fused` zincirine dahil değildir. Mevcut v1 ses emosyonundan (`/analyze-voice-sentiment`) bağımsızdır.
     """
     if not EMOTION_V2_URL:
@@ -981,7 +983,7 @@ async def proxy_analyze_emotion_v2(
     if include_branches:
         upstream_url = f"{upstream_url}?include_branches=true"
 
-    extra: Dict[str, str] = {}
+    extra: Dict[str, str] = {"speech_language": _normalize_speech_language_for_stt(speech_language)}
     if language is not None and str(language).strip():
         extra["language"] = str(language).strip()
     if transcript is not None and str(transcript).strip():
@@ -1258,7 +1260,7 @@ async def togg_analyze(request: Request, file: UploadFile = File(..., descriptio
 async def analyze_fused(
     request: Request,
     file: UploadFile = File(..., description="Ses dosyası"),
-    speech_language: str = Form("tr", description="STT dili: tr | en | ar"),
+    speech_language: str = Form("tr", description="STT dili: tr | en | ar | auto"),
 ):
     """
     Tek ses dosyasında STT, metin/ses duygusu, hastalık, mental fitness, yaş-cinsiyet, depresyon

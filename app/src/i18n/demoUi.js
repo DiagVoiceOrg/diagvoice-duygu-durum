@@ -17,6 +17,7 @@ export const SPEECH_LANGS = [
   { id: 'tr', label: 'Türkçe' },
   { id: 'en', label: 'English' },
   { id: 'ar', label: 'العربية' },
+  { id: 'auto', label: 'Auto' },
 ];
 
 const TR = {
@@ -40,7 +41,8 @@ const TR = {
   recorderMicDenied: 'Mikrofon erişimi reddedildi veya bir hata oluştu.',
 
   speechLangTitle: 'Konuşma dili',
-  speechLangHint: 'Whisper bu dilde dinler. Arayüz dili (üst menü) bundan bağımsızdır.',
+  speechLangHint: 'Whisper bu dilde dinler. Auto seçilirse dil otomatik tespit edilir. Arayüz dili (üst menü) bundan bağımsızdır.',
+  speechLangAuto: 'Otomatik',
   speechLangAria: 'Konuşma dili seçimi',
 
   sampleTitle: 'Örnek sesler',
@@ -204,7 +206,8 @@ const EN = {
   recorderMicDenied: 'Microphone access was denied or an error occurred.',
 
   speechLangTitle: 'Speech language',
-  speechLangHint: 'Whisper listens in this language. Independent from the UI language above.',
+  speechLangHint: 'Whisper listens in this language. Choose Auto for automatic detection. Independent from the UI language above.',
+  speechLangAuto: 'Auto',
   speechLangAria: 'Speech language selection',
 
   sampleTitle: 'Sample audio',
@@ -294,7 +297,7 @@ const EN = {
   mdSentProcessingErr: 'Text sentiment error',
   mdAudioMetaTitle: 'Speech emotion outputs',
   mdEmotionV2Intro: 'Multimodal stacking',
-  mdEmotionV2Transcript: 'Model transcript (v2 internal STT)',
+  mdEmotionV2Transcript: 'Model transcript (central STT)',
   mdDurationSec: 'Duration (sec)',
   mdPredSummary: 'Prediction summary',
   mdPredLabel: 'Predicted label',
@@ -365,7 +368,8 @@ const AR = {
   recorderMicDenied: 'تم رفض الوصول إلى الميكروفون أو حدث خطأ.',
 
   speechLangTitle: 'لغة الكلام',
-  speechLangHint: 'Whisper يستمع بهذه اللغة. مستقل عن لغة الواجهة في الأعلى.',
+  speechLangHint: 'Whisper يستمع بهذه اللغة. Auto يكتشف اللغة تلقائياً. مستقل عن لغة الواجهة في الأعلى.',
+  speechLangAuto: 'تلقائي',
   speechLangAria: 'اختيار لغة الكلام',
 
   sampleTitle: 'عينات صوتية',
@@ -552,10 +556,10 @@ export function writeStoredDemoLang(lang) {
   }
 }
 
-/** @returns {'tr'|'en'|'ar'} */
+/** @returns {'tr'|'en'|'ar'|'auto'} */
 export function normalizeSpeechLang(v) {
   const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  if (s === 'en' || s === 'ar') return s;
+  if (s === 'en' || s === 'ar' || s === 'auto') return s;
   return 'tr';
 }
 

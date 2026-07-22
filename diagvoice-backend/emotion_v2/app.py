@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -17,6 +18,11 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+from code.stt.language import normalize_speech_language_code, resolve_whisper_language
 from emotion_runtime import MultimodalEmotionPredictor, RuntimeConfig
 
 _log = logging.getLogger("diagvoice.emotion_v2")
@@ -75,6 +81,7 @@ async def lifespan(app: FastAPI):
             device=DEVICE,
             min_audio_seconds=MIN_AUDIO_SECONDS,
             max_audio_seconds=MAX_AUDIO_SECONDS,
+            stt_url=os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe"),
         )
         app.state.predictor = await run_in_threadpool(MultimodalEmotionPredictor, config)
         _log.info("Model hazır: %s", app.state.predictor.model_info())
@@ -95,8 +102,8 @@ app = FastAPI(
     title="DiagVoice Emotion v2",
     version="2.0.0",
     description=(
-        "Multimodal stacking emosyon tanıma: Whisper transkript, E5 metin embedding, "
-        "WavLM ses embedding ve 137 akustik özellik → anger/fear/happiness/sadness."
+        "Multimodal stacking emosyon tanıma: merkezi STT (Whisper v3 turbo) transkript, "
+        "E5 metin embedding, WavLM ses embedding ve 137 akustik özellik → anger/fear/happiness/sadness."
     ),
     lifespan=lifespan,
 )
@@ -205,6 +212,7 @@ async def _save_upload(upload: UploadFile) -> Path:
 async def _run_prediction(
     request: Request,
     file: UploadFile,
+    speech_language: Optional[str],
     language: Optional[str],
     transcript: Optional[str],
     include_branches: bool,
@@ -224,14 +232,38 @@ async def _run_prediction(
     try:
         temporary_path = await _save_upload(file)
 
-        resolved_language = language.strip() if language and language.strip() else None
+        raw_speech_language = (
+            speech_language.strip()
+            if speech_language and speech_language.strip()
+            else None
+        )
+        if raw_speech_language is None and language and language.strip():
+            whisper_lang = resolve_whisper_language(language)
+            if whisper_lang is None:
+                raw_speech_language = "auto"
+            else:
+                raw_speech_language = {
+                    "turkish": "tr",
+                    "english": "en",
+                    "arabic": "ar",
+                }.get(whisper_lang, language.strip())
+
+        resolved_speech_language = normalize_speech_language_code(raw_speech_language)
         resolved_transcript = transcript.strip() if transcript and transcript.strip() else None
 
         def _predict_with_lock() -> dict[str, Any]:
             if _EMOTION_V2_USE_INFER_LOCK:
                 with _infer_lock:
-                    return predictor.predict(temporary_path, resolved_language, resolved_transcript)
-            return predictor.predict(temporary_path, resolved_language, resolved_transcript)
+                    return predictor.predict(
+                        temporary_path,
+                        resolved_speech_language,
+                        resolved_transcript,
+                    )
+            return predictor.predict(
+                temporary_path,
+                resolved_speech_language,
+                resolved_transcript,
+            )
 
         async with _predict_lock:
             result = await run_in_threadpool(_predict_with_lock)
@@ -274,13 +306,17 @@ async def _run_prediction(
 async def analyze_audio(
     request: Request,
     file: UploadFile = File(..., description="Ses dosyası"),
+    speech_language: str = Form(
+        "tr",
+        description="Konuşma dili: tr | en | ar | auto",
+    ),
     language: Optional[str] = Form(
-        "turkish",
-        description="turkish, english veya boş bırakılarak otomatik",
+        None,
+        description="(Geriye dönük) turkish, english, arabic veya auto",
     ),
     transcript: Optional[str] = Form(
         None,
-        description="Verilirse Whisper çalıştırılmaz ve doğrudan bu transkript kullanılır.",
+        description="Verilirse STT çalıştırılmaz ve doğrudan bu transkript kullanılır.",
     ),
     include_branches: bool = Query(
         False,
@@ -290,6 +326,7 @@ async def analyze_audio(
     return await _run_prediction(
         request=request,
         file=file,
+        speech_language=speech_language,
         language=language,
         transcript=transcript,
         include_branches=include_branches,

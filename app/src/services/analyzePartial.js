@@ -176,14 +176,9 @@ const KNOWN_CARD_IDS = new Set(CARD_IDS);
 /** analyze-fused ile karşılaştırılacak kartlar (fused dışı / ayrı proxy olanlar hariç) */
 const ANALYZE_FUSED_CARD_IDS = CARD_IDS.filter((id) => id !== 'audio_emotion_v2');
 
-function mapSttLangToEmotionV2Language(sttLang) {
-  const map = { tr: 'turkish', en: 'english', ar: 'arabic' };
-  return map[String(sttLang || 'tr').toLowerCase()] || 'turkish';
-}
-
 async function postEmotionV2(audioData, sttLanguage, transcript) {
   const fd = buildFormData(audioData);
-  fd.append('language', mapSttLangToEmotionV2Language(sttLanguage));
+  fd.append('speech_language', normalizeSpeechLanguageForStt(sttLanguage));
   const t = (transcript ?? '').trim();
   if (t) {
     fd.append('transcript', t);
@@ -212,6 +207,7 @@ function needsVoiceToText(uniqueIds, wantsUnifiedFusion = false) {
     uniqueIds.includes('transcript') ||
     uniqueIds.includes('sentiment') ||
     uniqueIds.includes('benchmark_v2') ||
+    uniqueIds.includes('audio_emotion_v2') ||
     wantsUnifiedFusion
   );
 }
@@ -313,18 +309,6 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
         }),
     );
   }
-  if (wantsEmotionV2 && !sttNeeded) {
-    phase1.push(
-      postEmotionV2(audioData, sttLang, null)
-        .then((d) => {
-          audioEmotionV2Result = d;
-        })
-        .catch((e) => {
-          audioEmotionV2Err =
-            e.response?.data ? JSON.stringify(e.response.data) : e.message || 'Emosyon v2 hatası';
-        }),
-    );
-  }
 
   await Promise.all(phase1);
 
@@ -365,7 +349,7 @@ export async function analyzeByProfileCards(audioData, profileCards, speechLangu
     );
   }
 
-  if (wantsEmotionV2 && sttNeeded) {
+  if (wantsEmotionV2) {
     phase2.push(
       postEmotionV2(audioData, sttLang, sttErr ? null : transcript)
         .then((d) => {

@@ -117,7 +117,7 @@ Tüm modelleri tek istekte çalıştırır. **Birincil istemci endpointi.**
 | Alan | Tip | Zorunlu | Açıklama |
 |------|-----|---------|----------|
 | `file` | file | ✅ | Ses dosyası |
-| `speech_language` | text | ❌ | `tr` \| `en` \| `ar` (varsayılan: `tr`) |
+| `speech_language` | text | ❌ | `tr` \| `en` \| `ar` \| `auto` (varsayılan: `tr`) |
 
 ```bash
 curl -X POST "https://aiapi.diagvoice.com/analyze-fused" \
@@ -481,25 +481,26 @@ curl -X POST "https://aiapi.diagvoice.com/analyze-voice-sentiment" \
 
 ### POST `/analyze-emotion-v2` — Emosyon v2 (Multimodal Stacking)
 
-Whisper transkript + E5 metin embedding + WavLM + 137 akustik özellik → stacking meta-model.
+Merkezi STT (Whisper v3 turbo) transkript + E5 metin embedding + WavLM + 137 akustik özellik → stacking meta-model.
 
 4 sınıf: **anger, fear, happiness, sadness** (`/analyze-fused` içinde **çalışmaz**; v1'den bağımsız proxy).
 
 | Alan | Tip | Zorunlu | Açıklama |
 |------|-----|---------|----------|
 | `file` | file | ✅ | Ses dosyası |
-| `language` | text | ❌ | `turkish` (varsayılan), `english` veya boş |
-| `transcript` | text | ❌ | Verilirse iç Whisper atlanır |
+| `speech_language` | text | ❌ | `tr` \| `en` \| `ar` \| `auto` (varsayılan: `tr`) |
+| `language` | text | ❌ | (Geriye dönük) `turkish` \| `english` \| `arabic` \| `auto` |
+| `transcript` | text | ❌ | Verilirse STT atlanır |
 
 Query: `include_branches=true` — dal olasılıklarını ekler.
 
 ```bash
 curl -X POST "https://aiapi.diagvoice.com/analyze-emotion-v2" \
   -F "file=@sample.wav" \
-  -F "language=turkish"
+  -F "speech_language=tr"
 ```
 
-Hazır transkript ile (Whisper atlama):
+Hazır transkript ile (STT atlama):
 
 ```bash
 curl -X POST "https://aiapi.diagvoice.com/analyze-emotion-v2" \
@@ -847,7 +848,7 @@ Prod ortamında `127.0.0.1`'e bağlıdır, dışarıdan erişilemez. Docker comp
 | 8057 | Depresyon | `POST /analyze-depression` | multipart: `file` |
 | 8058 | Türkçe psik | `POST /analyze` | JSON `{ "text": "..." }` |
 | 8058 | Türkçe psik health | `GET /health` | — |
-| 8059 | Emosyon v2 | `POST /analyze-audio` | multipart: `file`, `language?`, `transcript?` |
+| 8059 | Emosyon v2 | `POST /analyze-audio` | multipart: `file`, `speech_language?`, `transcript?` |
 | 8059 | Emosyon v2 health | `GET /health` | — |
 
 ---
