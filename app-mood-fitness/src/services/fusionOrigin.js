@@ -1,6 +1,6 @@
 /**
  * Fusion kök host (proxy uçları bu origin altında).
- * Bu uygulama /analyze-fused kullanmaz.
+ * Varsayılan: prod API. Yerel geliştirme için VITE_FUSION_ORIGIN=http://localhost:8085
  */
 export function getFusionOrigin() {
   const direct = (import.meta.env.VITE_FUSION_ORIGIN || '').trim();
@@ -12,5 +12,5 @@ export function getFusionOrigin() {
     if (stripped) return stripped;
   }
 
-  return 'http://localhost:8085';
+  return 'https://aiapi.diagvoice.com';
 }

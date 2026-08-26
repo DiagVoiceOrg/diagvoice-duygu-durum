@@ -1,23 +1,19 @@
 import { getFusionOrigin } from './fusionOrigin';
 
 const FUSION = () => getFusionOrigin();
-const TRANSCRIBE_URL = () => `${FUSION()}/analyze-voice-to-text`;
-const VOICE_EMOTION_URL = () => `${FUSION()}/analyze-voice-sentiment`;
+const EMOTION_V2_URL = () => `${FUSION()}/analyze-emotion-v2`;
 
 const TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 600000);
 const REQUEST_MS = Number.isFinite(TIMEOUT_MS) ? TIMEOUT_MS : 600000;
 
-/** UI (turkish|english|arabic|auto) → fusion STT Form `speech_language` (tr|en|ar|auto) */
+/** UI (turkish|english) → fusion `speech_language` (tr|en) */
 export function normalizeSpeechLanguageForStt(raw) {
   const s = String(raw ?? 'turkish').trim().toLowerCase();
   const map = {
     turkish: 'tr',
     english: 'en',
-    arabic: 'ar',
-    auto: 'auto',
     tr: 'tr',
     en: 'en',
-    ar: 'ar',
   };
   return map[s] || 'tr';
 }
@@ -70,7 +66,7 @@ async function postFormJson(url, formData) {
   }
 }
 
-export async function transcribeAudio(audioBlob, languageCode) {
+export async function analyzeEmotionV2(audioBlob, languageCode) {
   const formData = new FormData();
   const name =
     audioBlob && typeof audioBlob.name === 'string' && audioBlob.name.length > 0
@@ -79,31 +75,21 @@ export async function transcribeAudio(audioBlob, languageCode) {
   formData.append('file', audioBlob, name);
   formData.append('speech_language', normalizeSpeechLanguageForStt(languageCode));
 
-  return postFormJson(TRANSCRIBE_URL(), formData);
+  return postFormJson(EMOTION_V2_URL(), formData);
 }
 
-export async function analyzeVoiceEmotion(audioBlob) {
-  const formData = new FormData();
-  const name =
-    audioBlob && typeof audioBlob.name === 'string' && audioBlob.name.length > 0
-      ? audioBlob.name
-      : `recording.${extFromMime(audioBlob?.type)}`;
-  formData.append('file', audioBlob, name);
-
-  return postFormJson(VOICE_EMOTION_URL(), formData);
-}
-
+/** @deprecated use analyzeEmotionV2 — tek uç nokta STT + emosyon v2 döner */
 export async function runFullAnalysis(audioBlob, sttLanguage) {
-  const [sttResult, emotionResult] = await Promise.allSettled([
-    transcribeAudio(audioBlob, sttLanguage),
-    analyzeVoiceEmotion(audioBlob),
-  ]);
-
-  return {
-    stt: sttResult.status === 'fulfilled' ? sttResult.value : null,
-    sttError: sttResult.status === 'rejected' ? formatFetchError(sttResult.reason) : null,
-    emotion: emotionResult.status === 'fulfilled' ? emotionResult.value : null,
-    emotionError:
-      emotionResult.status === 'rejected' ? formatFetchError(emotionResult.reason) : null,
-  };
+  try {
+    const result = await analyzeEmotionV2(audioBlob, sttLanguage);
+    return {
+      emotionV2: result,
+      emotionV2Error: null,
+    };
+  } catch (err) {
+    return {
+      emotionV2: null,
+      emotionV2Error: formatFetchError(err),
+    };
+  }
 }

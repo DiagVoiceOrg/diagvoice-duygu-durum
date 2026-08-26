@@ -5,6 +5,15 @@ import AudioFilePicker from './components/AudioFilePicker';
 import { runFullAnalysis } from './services/analysis';
 import { UI_LANGUAGES, getStrings, interpolate, htmlLangAttribute } from './i18n';
 
+const EMOTION_ORDER = ['anger', 'fear', 'happiness', 'sadness'];
+
+const EMOTION_COLORS = {
+  anger: '#ef4444',
+  fear: '#8b5cf6',
+  happiness: '#10b981',
+  sadness: '#6366f1',
+};
+
 function ProbBar({ label, value, color }) {
   const v = Math.min(100, Math.max(0, Number(value) * 100));
   return (
@@ -20,8 +29,8 @@ function ProbBar({ label, value, color }) {
   );
 }
 
-function hasServiceOutcome(stt, sttErr, emotion, emotionErr) {
-  return !!(stt || emotion) || !!(sttErr || emotionErr);
+function hasServiceOutcome(result, error) {
+  return !!result || !!error;
 }
 
 export default function App() {
@@ -29,10 +38,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentAnalysisSource, setCurrentAnalysisSource] = useState('');
   const [fatalError, setFatalError] = useState('');
-  const [stt, setStt] = useState(null);
-  const [sttError, setSttError] = useState(null);
-  const [emotion, setEmotion] = useState(null);
-  const [emotionError, setEmotionError] = useState(null);
+  const [emotionV2, setEmotionV2] = useState(null);
+  const [emotionV2Error, setEmotionV2Error] = useState(null);
 
   const m = getStrings(speechLang);
 
@@ -44,10 +51,8 @@ export default function App() {
 
   const resetResults = () => {
     setFatalError('');
-    setStt(null);
-    setSttError(null);
-    setEmotion(null);
-    setEmotionError(null);
+    setEmotionV2(null);
+    setEmotionV2Error(null);
   };
 
   const analyzeAudio = useCallback(
@@ -59,10 +64,8 @@ export default function App() {
       setCurrentAnalysisSource(sourceName);
       try {
         const out = await runFullAnalysis(blob, speechLang);
-        setStt(out.stt);
-        setSttError(out.sttError);
-        setEmotion(out.emotion);
-        setEmotionError(out.emotionError);
+        setEmotionV2(out.emotionV2);
+        setEmotionV2Error(out.emotionV2Error);
       } catch (err) {
         const msg = err?.message || loc.unknownError;
         console.error(`Analysis failed for ${sourceName}:`, err);
@@ -88,19 +91,13 @@ export default function App() {
     [analyzeAudio],
   );
 
-  const showResults =
-    !isLoading && hasServiceOutcome(stt, sttError, emotion, emotionError);
+  const showResults = !isLoading && hasServiceOutcome(emotionV2, emotionV2Error);
 
-  const emotionColors = ['#6366f1', '#f59e0b', '#10b981', '#ef4444'];
-  const labelsOrder = emotion?.labels
-    ? Object.keys(emotion.labels).sort((a, b) => Number(a) - Number(b))
-    : [];
-
-  const whisperLangLabel =
-    stt?.language &&
-    m.whisperLangDisplay[String(stt.language).toLowerCase()]
-      ? m.whisperLangDisplay[String(stt.language).toLowerCase()]
-      : stt?.language;
+  const predictionKey = emotionV2?.prediction;
+  const confidence =
+    typeof emotionV2?.confidence === 'number' ? emotionV2.confidence : null;
+  const probabilities = emotionV2?.probabilities || {};
+  const transcript = emotionV2?.transcript;
 
   return (
     <div className="app-container">
@@ -180,46 +177,48 @@ export default function App() {
         <section className="results-section">
           <article className="card result-block">
             <h2>{m.emotionSectionTitle}</h2>
-            {emotionError && <p className="err">{emotionError}</p>}
-            {!emotionError && emotion && (
+            {emotionV2Error && <p className="err">{emotionV2Error}</p>}
+            {!emotionV2Error && emotionV2 && (
               <>
                 <p className="lead">
                   {m.prediction}:{' '}
-                  <strong>{m.emotions[emotion.pred_label] || emotion.pred_label}</strong>
-                  {' · '}
-                  {m.intensity}: {(Number(emotion.intensity) * 100).toFixed(0)}%
+                  <strong style={{ color: EMOTION_COLORS[predictionKey] || '#334155' }}>
+                    {m.emotions[predictionKey] || predictionKey}
+                  </strong>
+                  {confidence != null && (
+                    <>
+                      {' · '}
+                      {m.confidence}: {(confidence * 100).toFixed(0)}%
+                    </>
+                  )}
                 </p>
-                {emotion.probs &&
-                  labelsOrder.map((idx) => {
-                    const key = emotion.labels[idx];
-                    return (
-                      <ProbBar
-                        key={idx}
-                        label={m.emotions[key] || key}
-                        value={emotion.probs[Number(idx)]}
-                        color={emotionColors[Number(idx) % emotionColors.length]}
-                      />
-                    );
-                  })}
+                {EMOTION_ORDER.map((key) => (
+                  <ProbBar
+                    key={key}
+                    label={m.emotions[key] || key}
+                    value={probabilities[key] ?? 0}
+                    color={EMOTION_COLORS[key]}
+                  />
+                ))}
+                {typeof emotionV2.processing_time_ms === 'number' && (
+                  <p className="meta-small">
+                    {m.processingTime}: {Math.round(emotionV2.processing_time_ms)} ms
+                  </p>
+                )}
               </>
             )}
-            {!emotionError && !emotion && <p className="muted">{m.noComponentResult}</p>}
+            {!emotionV2Error && !emotionV2 && <p className="muted">{m.noComponentResult}</p>}
           </article>
 
           <article className="card result-block">
             <h2>{m.transcriptionSectionTitle}</h2>
-            {sttError && <p className="err">{sttError}</p>}
-            {!sttError && stt && (
+            {emotionV2Error && <p className="muted">{m.noComponentResult}</p>}
+            {!emotionV2Error && emotionV2 && (
               <div className="transcript-box" dir="auto">
-                {stt.text || <span className="muted">{m.emptyTranscript}</span>}
-                {whisperLangLabel && (
-                  <p className="meta-small">
-                    {m.transcriptLangLabel}: {whisperLangLabel}
-                  </p>
-                )}
+                {transcript || <span className="muted">{m.emptyTranscript}</span>}
               </div>
             )}
-            {!sttError && !stt && <p className="muted">{m.noComponentResult}</p>}
+            {!emotionV2Error && !emotionV2 && <p className="muted">{m.noComponentResult}</p>}
           </article>
         </section>
       )}
