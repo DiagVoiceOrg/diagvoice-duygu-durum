@@ -8,7 +8,9 @@
 //   hedef:  root  → GET /                     (model yok; nginx + uvicorn + audit katmanı)
 //           text  → POST /analyze-text-sentiment (GPU BERT, kısa)
 //           fused → POST /analyze-fused         (STT + tüm modeller, gerçek kullanım)
+//           togg  → POST /togg-analyze          (ses emosyonu + WURSS; araç senaryosu)
 //   _burst: her VU tek istek atar ve hepsi aynı anda başlar ("N eşzamanlı istek").
+//   _seq:   1 VU dahil, DURATION boyunca art arda istek (tek kullanıcı gecikme dağılımı).
 //   burst yoksa: N VU, DURATION boyunca (varsayılan 3m) art arda istek atar (sürekli yük).
 //
 // Ortam değişkenleri:
@@ -32,14 +34,14 @@ const AUDIO_PATH =
   __ENV.AUDIO || '../../diagvoice-backend/test-data/ornek-ses-kayitlari/bu-harika-bir-gun.m4a';
 
 if (!BASE_URL) throw new Error('BASE_URL gerekli');
-const m = /^(root|text|fused)_(\d+)(_burst)?$/.exec(STAGE);
+const m = /^(root|text|fused|togg)_(\d+)(_burst|_seq)?$/.exec(STAGE);
 if (!m) throw new Error(`Geçersiz STAGE: "${STAGE}" (ör. fused_10, root_50000_burst)`);
 const TARGET = m[1];
 const VUS = parseInt(m[2], 10);
-const BURST = Boolean(m[3]) || VUS === 1;
+const BURST = m[3] === '_burst' || (VUS === 1 && m[3] !== '_seq');
 
-// Ses dosyası yalnızca fused kademesinde okunur (init bağlamı her VU'da çalışır).
-const AUDIO = TARGET === 'fused' ? open(AUDIO_PATH, 'b') : null;
+// Ses dosyası yalnızca ses kademelerinde okunur (init bağlamı her VU'da çalışır).
+const AUDIO = TARGET === 'fused' || TARGET === 'togg' ? open(AUDIO_PATH, 'b') : null;
 
 const TEXTS = [
   'Bugün kendimi çok iyi hissediyorum, her şey yolunda.',
@@ -51,6 +53,7 @@ const status2xx = new Counter('status_2xx');
 const status4xx = new Counter('status_4xx');
 const status5xx = new Counter('status_5xx');
 const statusNet = new Counter('status_network_error'); // status 0: bağlantı reddi, reset, timeout
+const statusPartial = new Counter('status_partial'); // togg: 200 ama audio_error/disease_error dolu
 const okDuration = new Trend('ok_duration', true);
 
 export const options = {
@@ -83,6 +86,14 @@ function send() {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+  if (TARGET === 'togg') {
+    // Gövde okunur: uç, servis hatasında da 200 döner (audio_error / disease_error).
+    return http.post(
+      `${BASE_URL}/togg-analyze`,
+      { file: http.file(AUDIO, 'loadtest.m4a', 'audio/mp4') },
+      { ...params, responseType: 'text' },
+    );
+  }
   return http.post(
     `${BASE_URL}/analyze-fused`,
     { file: http.file(AUDIO, 'loadtest.m4a', 'audio/mp4'), speech_language: 'tr' },
@@ -96,6 +107,16 @@ export default function () {
   if (s >= 200 && s < 300) {
     status2xx.add(1);
     okDuration.add(res.timings.duration);
+    if (TARGET === 'togg') {
+      let partial = true;
+      try {
+        const b = JSON.parse(res.body);
+        partial = Boolean(b.audio_error || b.disease_error || !b.audio || !b.disease);
+      } catch (e) {
+        partial = true;
+      }
+      if (partial) statusPartial.add(1);
+    }
   } else if (s >= 400 && s < 500) status4xx.add(1);
   else if (s >= 500) status5xx.add(1);
   else statusNet.add(1);
@@ -111,7 +132,7 @@ export function handleSummary(data) {
   const fmt = (v) => (v === undefined ? '-' : `${(v / 1000).toFixed(2)}s`);
   const line =
     `\n[${STAGE}] istek=${c('http_reqs')} rps=${(reqs.rate || 0).toFixed(2)} ` +
-    `2xx=${c('status_2xx')} 4xx=${c('status_4xx')} 5xx=${c('status_5xx')} ağ_hatası=${c('status_network_error')}\n` +
+    `2xx=${c('status_2xx')} (kısmi=${c('status_partial')}) 4xx=${c('status_4xx')} 5xx=${c('status_5xx')} ağ_hatası=${c('status_network_error')}\n` +
     `  tüm süreler: med=${fmt(d.med)} p95=${fmt(d['p(95)'])} max=${fmt(d.max)}\n` +
     `  başarılılar: med=${fmt(ok.med)} p95=${fmt(ok['p(95)'])} max=${fmt(ok.max)}\n`;
   return { [out]: JSON.stringify(data, null, 2), stdout: line };
