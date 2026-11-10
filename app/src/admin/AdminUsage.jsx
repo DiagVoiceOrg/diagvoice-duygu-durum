@@ -113,7 +113,7 @@ export default function AdminUsage() {
       <div className="admin-page-head">
         <h1>API kullanımı</h1>
         <p style={{ margin: '0.35rem 0 0', color: 'var(--text-muted)', maxWidth: '52rem' }}>
-          Fusion (8085) üzerinden kaydedilen istekler: yol, HTTP durumu, süre ve özet ayrıntılar. Hata
+          Fusion API üzerinden kaydedilen istekler: yol, HTTP durumu, süre ve özet ayrıntılar. Hata
           kayıtlarında <code>error_summary</code>, <code>upstream_errors</code> veya doğrulama mesajları
           görünür. Ses içeren istekler <code>data/audio_recordings</code> volume’unda saklanır; detay
           ekranından dinleyebilirsiniz. Tam STT metni varsayılan olarak saklanmaz; sunucuda{' '}

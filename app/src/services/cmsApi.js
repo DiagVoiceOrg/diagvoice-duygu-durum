@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { getFusionOrigin } from './fusionOrigin';
 
-// Fusion ile aynı host (varsayılan 8085).
-const base = () => import.meta.env.VITE_CMS_API_URL || 'http://localhost:8085';
+// Fusion ile aynı backend (varsayılan: aynı origin /api).
+const base = () => (import.meta.env.VITE_CMS_API_URL || '').trim().replace(/\/+$/, '') || getFusionOrigin();
 
 const TOKEN_KEY = 'diagvoice_cms_token';
 

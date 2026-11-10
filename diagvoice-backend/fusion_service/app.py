@@ -118,11 +118,25 @@ async def _app_lifespan(_app: fastapi.FastAPI):
             _upstream_httpx = None
 
 
+# İsteğe bağlı reverse proxy öneki (uvicorn root_path). Varsayılan boş: host nginx aiapi.diagvoice.com'u
+# doğrudan backend'e iletiyor, Swagger aiapi.diagvoice.com/docs adresinde önek olmadan sunuluyor.
+FUSION_ROOT_PATH = os.environ.get("FUSION_ROOT_PATH", "").strip().rstrip("/")
+
+
+def _route_path(request: Request) -> str:
+    """İstek yolu, proxy öneki (root_path) hariç: /api/analyze-fused → /analyze-fused."""
+    path = request.scope.get("path", "")
+    root = request.scope.get("root_path", "") or ""
+    if root and (path == root or path.startswith(root + "/")):
+        return path[len(root):] or "/"
+    return path
+
+
 app = fastapi.FastAPI(
     title="DiagVoice Fusion API",
     description=(
         "Ses tabanlı çoklu model analizi için tek giriş noktası: STT, duygu, hastalık, mental fitness, "
-        "depresyon, yaş-cinsiyet ve isteğe bağlı benchmark. İç servislere proxy ve CMS (MongoDB) API'si.\n\n"
+        "depresyon, yaş-cinsiyet ve isteğe bağlı benchmark. Tek model uçları ve bileşik analiz uçları.\n\n"
         "**OpenAPI:** Bu sayfa (`/docs`), ReDoc (`/redoc`) ve ham şema (`/openapi.json`) FastAPI tarafından "
         "otomatik üretilir. Ayrıntılı iş kuralları için depodaki `FUSION_API_REFERENCE.md` dosyasına bakın."
     ),
@@ -146,7 +160,7 @@ async def _request_validation_exception_handler(request: Request, exc: RequestVa
 
     errs = exc.errors()
     set_request_error_audit(request, error_details_from_validation(errs))
-    if request.url.path.startswith("/wellness/"):
+    if _route_path(request).startswith("/wellness/"):
         msg = errs[0].get("msg", "Geçersiz istek.") if errs else "Geçersiz istek."
         return JSONResponse(status_code=400, content={"error": str(msg)})
     return JSONResponse(status_code=422, content={"detail": errs})
@@ -185,7 +199,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 
     if isinstance(exc, HTTPException):
         raise exc
-    _log.exception("unhandled_exception path=%s", request.url.path)
+    _log.exception("unhandled_exception path=%s", _route_path(request))
     set_request_error_audit(request, error_details_from_unhandled(exc))
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
@@ -211,7 +225,7 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
         set_request_error_audit,
     )
 
-    path = request.url.path
+    path = _route_path(request)
     if not _CMS_ENABLED or not AUDIT_LOG_ENABLED or _skip_path(path):
         return await call_next(request)
     t0 = time.perf_counter()
@@ -249,7 +263,7 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
 
 from fusion_service.wellness.router import router as wellness_router
 
-app.include_router(wellness_router)
+app.include_router(wellness_router, include_in_schema=False)
 
 if _CMS_ENABLED:
     from cms.routers import admin_diagnostics as cms_admin_diagnostics
@@ -259,12 +273,12 @@ if _CMS_ENABLED:
     from cms.routers import auth as cms_auth
     from cms.routers import public as cms_public
 
-    app.include_router(cms_auth.router)
-    app.include_router(cms_public.router)
-    app.include_router(cms_admin_pages.router)
-    app.include_router(cms_admin_profiles.router)
-    app.include_router(cms_admin_diagnostics.router)
-    app.include_router(cms_admin_usage.router)
+    app.include_router(cms_auth.router, include_in_schema=False)
+    app.include_router(cms_public.router, include_in_schema=False)
+    app.include_router(cms_admin_pages.router, include_in_schema=False)
+    app.include_router(cms_admin_profiles.router, include_in_schema=False)
+    app.include_router(cms_admin_diagnostics.router, include_in_schema=False)
+    app.include_router(cms_admin_usage.router, include_in_schema=False)
 
 VOICE_TO_TEXT_URL = _ipv4_loopback_url(
     os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
@@ -799,7 +813,7 @@ async def _proxy_json(
     return JSONResponse(status_code=r.status_code, content=body)
 
 
-@app.get("/", response_model=ServiceInfoResponse, tags=["meta"])
+@app.get("/", response_model=ServiceInfoResponse, tags=["meta"], include_in_schema=False)
 async def root():
     """Servis özeti, iç bağımlılık URL'leri ve OpenAPI dokümantasyon bağlantıları."""
     return {
@@ -1557,4 +1571,4 @@ async def analyze_fused(
 
 if __name__ == "__main__":
     _fusion_port = int(os.environ.get("FUSION_PORT", "8085"))
-    uvicorn.run(app, host="0.0.0.0", port=_fusion_port)
+    uvicorn.run(app, host="0.0.0.0", port=_fusion_port, root_path=FUSION_ROOT_PATH)
