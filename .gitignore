@@ -26,3 +26,7 @@ data/audio_recordings/*
 # Backend model dosyaları (GitHub'a gönderme; mental-fitness-forgpt.safetensors dahil)
 diagvoice-backend/models/
 diagvoice-backend/**/models/
+
+# Yük testi çıktıları
+loadtest/results/
+loadtest/monitor/
