@@ -1,0 +1,262 @@
+{
+  "case": {
+    "audio": "sad/02cNmaVN66MFAo9B0XUC.wav",
+    "file_field": "file",
+    "form": {
+      "speech_language": "tr"
+    },
+    "id": "analyze-fused__sad-02cnmavn66mfao9b0xuc",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-fused",
+    "query": {},
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "age_gender": {
+      "agebin": {
+        "pred_id": 0,
+        "pred_label": "15-24",
+        "probs": [
+          0.22189895808696747,
+          0.2128153145313263,
+          0.16194891929626465,
+          0.20987798273563385,
+          0.19345879554748535
+        ]
+      },
+      "gender": {
+        "pred_id": 0,
+        "pred_label": "female",
+        "probs": [
+          0.9986475254213779,
+          0.0013524745786221287
+        ],
+        "source": "ready_model"
+      }
+    },
+    "age_gender_error": null,
+    "audio": {
+      "duration_sec": 30.0,
+      "intensity": 0.7188496589660645,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "num_segments": 3,
+      "pred_id": 0,
+      "pred_label": "sadness",
+      "probs": [
+        0.47978687286376953,
+        0.1125602126121521,
+        0.34150752425193787,
+        0.06614544242620468
+      ],
+      "sample_rate": 16000
+    },
+    "audio_error": null,
+    "benchmark_v2": {
+      "class_names_hint": "0: sağlıklı, 1: tanılı (eğitim etiketine bağlı — benchmark ile doğrulayın)",
+      "mode": "scalar_hgb",
+      "positive_class_probability": 0.5103163646816243,
+      "predicted_class": 1,
+      "threshold_objective": "balanced_accuracy",
+      "threshold_tuned": 0.15
+    },
+    "benchmark_v2_error": null,
+    "confidence": {
+      "audio": 0.4465332567376994,
+      "disagreement": 0.3212943542818689,
+      "dynamic_fusion": true,
+      "text": 0.79798424243927
+    },
+    "depression": {
+      "final_prob_depression": 0.512695848941803,
+      "is_unstable": true,
+      "labels": {
+        "0": "saglikli",
+        "1": "depresyon"
+      },
+      "max_prob_depression": 0.9864396452903748,
+      "mean_prob_depression": 0.5512275695800781,
+      "median_prob_depression": 0.4628480076789856,
+      "min_prob_depression": 0.03877563402056694,
+      "pred_id": 1,
+      "pred_label": "depresyon",
+      "reliability": "dusuk",
+      "risk_level": "yuksek",
+      "segment_count": 16,
+      "segment_probs": [
+        0.69233238697052,
+        0.8408457636833191,
+        0.34473711252212524,
+        0.1810220628976822,
+        0.05948899686336517,
+        0.03877563402056694,
+        0.33466455340385437,
+        0.24970854818820953,
+        0.36211729049682617,
+        0.45095357298851013,
+        0.47474247217178345,
+        0.968010663986206,
+        0.9844135046005249,
+        0.9864396452903748,
+        0.9831526875495911,
+        0.8682367205619812
+      ],
+      "std_prob_depression": 0.336823046207428,
+      "threshold": 0.38,
+      "trimmed_mean_prob_depression": 0.5625436902046204
+    },
+    "depression_error": null,
+    "disease": {
+      "labels": {
+        "0": "healthy",
+        "1": "sick"
+      },
+      "pred_id": 0,
+      "pred_label": "healthy",
+      "probs": [
+        0.9866116046905518,
+        0.013388401828706264
+      ]
+    },
+    "disease_error": null,
+    "fused": {
+      "label": "NEGATIVE",
+      "valence": 0.3111463403774155,
+      "w_text": 0.5847198174356556
+    },
+    "mental_fitness": {
+      "mental_fitness_score": 59.0,
+      "pred_id": 1,
+      "pred_label": "healthy",
+      "probs": [
+        0.41,
+        0.59
+      ]
+    },
+    "mental_fitness_error": null,
+    "text": "Arkadaşlarımla yaptığım bir seyahatte onlarla gece beraber kalacaktık ve onların yanına sormadan geldim. Bir gruptular 4-5 kişi falan. Hiç görülmedim o grup içinde. Hiç muhabbete dahil edilmedim. Görmezden gelindim. Sanki hiç tanışmıyormuşuz gibi yani aşırı ignore edildim ve bütün gece benimle hiç kimse konuşmadı. Tek kelime dahil edilmedi ve kendimi çok kötü hissettim ve bu insanlar benim çok yakın arkadaşlarımdı. Yanlış bir şey yaptığımı, onları üzdüğümü düşündüm ama bu uğradığım bu tavır karşısında aşırı üzüldüm ve orayı sabahleyin planımız o yönde olmamasına rağmen terk etmek durumunda kaldım. Bu tavır karşısında aşırı üzüldüm ve orayı sabahleyin planımız o yönde olmamasına rağmen terk etmek durumunda kaldım.",
+    "text_error": null,
+    "text_sentiment": {
+      "score": 0.79798424243927,
+      "sentiment": "Negative"
+    },
+    "text_sentiment_error": null,
+    "unified_emotion": {
+      "agreement": "medium",
+      "disagreement": 0.3212943542818689,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "pred_id": 0,
+      "pred_label": "sadness",
+      "probs": [
+        0.44701394741499534,
+        0.14212996591771582,
+        0.1864132306880723,
+        0.22444285597921648
+      ],
+      "sources": {
+        "audio": {
+          "intensity": 0.7188496589660645,
+          "pred_id": 0,
+          "pred_label": "sadness",
+          "probs": [
+            0.4797868478409355,
+            0.11256020674167985,
+            0.3415075064409335,
+            0.06614543897645121
+          ],
+          "valence": 0.4070053609273034
+        },
+        "text": {
+          "normalized": "NEGATIVE",
+          "probs": [
+            0.4237379515171051,
+            0.16313102424144746,
+            0.07626204848289492,
+            0.3368689757585525
+          ],
+          "score": 0.79798424243927,
+          "sentiment": "Negative",
+          "valence": 0.20201575756072998
+        }
+      },
+      "w_text": 0.5847198174356556
+    },
+    "valence_audio": 0.4070053609273034,
+    "valence_text": 0.20201575756072998
+  },
+  "seconds": [
+    26.793,
+    27.815
+  ],
+  "status": 200,
+  "volatile_paths": [],
+  "warnings": []
+}

@@ -1,0 +1,257 @@
+{
+  "case": {
+    "audio": "anger/1s1Rl19d81ZDzADlnDAS.wav",
+    "file_field": "file",
+    "form": {
+      "speech_language": "tr"
+    },
+    "id": "analyze-fused__anger-1s1rl19d81zdzadlndas",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-fused",
+    "query": {},
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "age_gender": {
+      "agebin": {
+        "pred_id": 1,
+        "pred_label": "25-34",
+        "probs": [
+          0.2143947035074234,
+          0.2292812615633011,
+          0.15442931652069092,
+          0.21315021812915802,
+          0.18874451518058777
+        ]
+      },
+      "gender": {
+        "pred_id": 0,
+        "pred_label": "female",
+        "probs": [
+          0.9984730400987385,
+          0.00152695990126152
+        ],
+        "source": "ready_model"
+      }
+    },
+    "age_gender_error": null,
+    "audio": {
+      "duration_sec": 30.0,
+      "intensity": 0.7737802863121033,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "num_segments": 3,
+      "pred_id": 3,
+      "pred_label": "anger",
+      "probs": [
+        0.05725167319178581,
+        0.08857527375221252,
+        0.023616978898644447,
+        0.8305560946464539
+      ],
+      "sample_rate": 16000
+    },
+    "audio_error": null,
+    "benchmark_v2": {
+      "class_names_hint": "0: sağlıklı, 1: tanılı (eğitim etiketine bağlı — benchmark ile doğrulayın)",
+      "mode": "scalar_hgb",
+      "positive_class_probability": 0.2218705414345607,
+      "predicted_class": 1,
+      "threshold_objective": "balanced_accuracy",
+      "threshold_tuned": 0.15
+    },
+    "benchmark_v2_error": null,
+    "confidence": {
+      "audio": 0.6628685210162683,
+      "disagreement": 0.48602814164735963,
+      "dynamic_fusion": true,
+      "text": 0.9158143997192383
+    },
+    "depression": {
+      "final_prob_depression": 0.9634982347488403,
+      "is_unstable": false,
+      "labels": {
+        "0": "saglikli",
+        "1": "depresyon"
+      },
+      "max_prob_depression": 0.9810567498207092,
+      "mean_prob_depression": 0.9603635668754578,
+      "median_prob_depression": 0.9641420841217041,
+      "min_prob_depression": 0.9172530770301819,
+      "pred_id": 1,
+      "pred_label": "depresyon",
+      "reliability": "yuksek",
+      "risk_level": "yuksek",
+      "segment_count": 11,
+      "segment_probs": [
+        0.9676056504249573,
+        0.9810567498207092,
+        0.9798324108123779,
+        0.9591254591941833,
+        0.9172530770301819,
+        0.967082142829895,
+        0.9622284770011902,
+        0.9641420841217041,
+        0.9652981758117676,
+        0.9607406258583069,
+        0.9396347403526306
+      ],
+      "std_prob_depression": 0.017153875902295113,
+      "threshold": 0.38,
+      "trimmed_mean_prob_depression": 0.9628543853759766
+    },
+    "depression_error": null,
+    "disease": {
+      "labels": {
+        "0": "healthy",
+        "1": "sick"
+      },
+      "pred_id": 0,
+      "pred_label": "healthy",
+      "probs": [
+        0.986592710018158,
+        0.013407278805971146
+      ]
+    },
+    "disease_error": null,
+    "fused": {
+      "label": "NEGATIVE",
+      "valence": 0.21025070395794832,
+      "w_text": 0.5480677672926677
+    },
+    "mental_fitness": {
+      "mental_fitness_score": 56.0,
+      "pred_id": 1,
+      "pred_label": "healthy",
+      "probs": [
+        0.44,
+        0.56
+      ]
+    },
+    "mental_fitness_error": null,
+    "text": "Şu an izlediğim video çok etkileyici ve çok üzücü. Bir insan yaptığı mesleğe saygı duymalı ve görevini hakkıyla yerine getirmeli ya da çalışmamalı. Kadının yaptığı görevine amacı sadece para kazanmak olduğu ve yaptığı görevde de hakkıyla yapmayıp insanlara karşı kötü bir şekilde davranma. Ne yazık ki bu durum gerçek hayatta da çok karşılaşıyoruz. Keşke filmlerde kalsaydı. Ve yaptığı görevde de hakkıyla yapmayıp insanlara karşı kötü bir şekilde davranma. Ne yazık ki bu durum gerçek hayatta da çok karşılaşıyoruz. Keşke filmlerde kalsaydı.",
+    "text_error": null,
+    "text_sentiment": {
+      "score": 0.9158143997192383,
+      "sentiment": "Negative"
+    },
+    "text_sentiment_error": null,
+    "unified_emotion": {
+      "agreement": "low",
+      "disagreement": 0.48602814164735963,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "pred_id": 3,
+      "pred_label": "anger",
+      "probs": [
+        0.26650624742543333,
+        0.12523924741218634,
+        0.04407478596734309,
+        0.5641797191950373
+      ],
+      "sources": {
+        "audio": {
+          "intensity": 0.7737802863121033,
+          "pred_id": 3,
+          "pred_label": "anger",
+          "probs": [
+            0.05725167201875077,
+            0.08857527193738522,
+            0.023616978414753895,
+            0.8305560776291101
+          ],
+          "valence": 0.20935856097413091
+        },
+        "text": {
+          "normalized": "NEGATIVE",
+          "probs": [
+            0.439055871963501,
+            0.1554720640182495,
+            0.060944128036499026,
+            0.34452793598175047
+          ],
+          "score": 0.9158143997192383,
+          "sentiment": "Negative",
+          "valence": 0.08418560028076172
+        }
+      },
+      "w_text": 0.5480677672926677
+    },
+    "valence_audio": 0.20935856097413091,
+    "valence_text": 0.08418560028076172
+  },
+  "seconds": [
+    18.206,
+    19.085
+  ],
+  "status": 200,
+  "volatile_paths": [],
+  "warnings": []
+}

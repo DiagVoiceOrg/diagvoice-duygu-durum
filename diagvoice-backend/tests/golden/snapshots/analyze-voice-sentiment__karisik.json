@@ -1,0 +1,98 @@
+{
+  "case": {
+    "audio": "karisik.m4a",
+    "file_field": "file",
+    "form": {},
+    "id": "analyze-voice-sentiment__karisik",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-voice-sentiment",
+    "query": {},
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "duration_sec": 13.301375,
+    "intensity": 0.75491863489151,
+    "labels": {
+      "0": "sadness",
+      "1": "fear",
+      "2": "happiness",
+      "3": "anger"
+    },
+    "num_segments": 1,
+    "pred_id": 2,
+    "pred_label": "happiness",
+    "probs": [
+      0.24424174427986145,
+      0.11287187784910202,
+      0.5074788928031921,
+      0.13540750741958618
+    ],
+    "sample_rate": 16000
+  },
+  "seconds": [
+    0.228,
+    0.228
+  ],
+  "status": 200,
+  "volatile_paths": [],
+  "warnings": []
+}

@@ -1,0 +1,247 @@
+{
+  "case": {
+    "audio": "fear/0NV4vQzAppvyre1qM0ef.wav",
+    "file_field": "file",
+    "form": {
+      "speech_language": "tr"
+    },
+    "id": "analyze-fused__fear-0nv4vqzappvyre1qm0ef",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-fused",
+    "query": {},
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "age_gender": {
+      "agebin": {
+        "pred_id": 2,
+        "pred_label": "35-44",
+        "probs": [
+          0.18192757666110992,
+          0.19547569751739502,
+          0.23434625566005707,
+          0.21501676738262177,
+          0.17323371767997742
+        ]
+      },
+      "gender": {
+        "pred_id": 0,
+        "pred_label": "female",
+        "probs": [
+          0.998683874721723,
+          0.0013161252782770039
+        ],
+        "source": "ready_model"
+      }
+    },
+    "age_gender_error": null,
+    "audio": {
+      "duration_sec": 3.424,
+      "intensity": 0.7440273761749268,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "num_segments": 1,
+      "pred_id": 1,
+      "pred_label": "fear",
+      "probs": [
+        0.04519352689385414,
+        0.9305897951126099,
+        0.014339535497128963,
+        0.009877219796180725
+      ],
+      "sample_rate": 16000
+    },
+    "audio_error": null,
+    "benchmark_v2": {
+      "class_names_hint": "0: sağlıklı, 1: tanılı (eğitim etiketine bağlı — benchmark ile doğrulayın)",
+      "mode": "scalar_hgb",
+      "positive_class_probability": 0.6465776741505762,
+      "predicted_class": 1,
+      "threshold_objective": "balanced_accuracy",
+      "threshold_tuned": 0.15
+    },
+    "benchmark_v2_error": null,
+    "confidence": {
+      "audio": 0.7589876125230479,
+      "disagreement": 0.7745735599482926,
+      "dynamic_fusion": true,
+      "text": 0.907443642616272
+    },
+    "depression": {
+      "final_prob_depression": 0.9635445475578308,
+      "is_unstable": false,
+      "labels": {
+        "0": "saglikli",
+        "1": "depresyon"
+      },
+      "max_prob_depression": 0.9635445475578308,
+      "mean_prob_depression": 0.9635445475578308,
+      "median_prob_depression": 0.9635445475578308,
+      "min_prob_depression": 0.9635445475578308,
+      "pred_id": 1,
+      "pred_label": "depresyon",
+      "reliability": "yuksek",
+      "risk_level": "yuksek",
+      "segment_count": 1,
+      "segment_probs": [
+        0.9635445475578308
+      ],
+      "std_prob_depression": 0.0,
+      "threshold": 0.38,
+      "trimmed_mean_prob_depression": 0.9635445475578308
+    },
+    "depression_error": null,
+    "disease": {
+      "labels": {
+        "0": "healthy",
+        "1": "sick"
+      },
+      "pred_id": 0,
+      "pred_label": "healthy",
+      "probs": [
+        0.9695146083831787,
+        0.030485404655337334
+      ]
+    },
+    "disease_error": null,
+    "fused": {
+      "label": "NEGATIVE",
+      "valence": 0.24894053782608422,
+      "w_text": 0.5267258601660816
+    },
+    "mental_fitness": {
+      "mental_fitness_score": 56.0,
+      "pred_id": 1,
+      "pred_label": "healthy",
+      "probs": [
+        0.44,
+        0.56
+      ]
+    },
+    "mental_fitness_error": null,
+    "text": "Biddi o izleyim edin bile. Korkunstu.",
+    "text_error": null,
+    "text_sentiment": {
+      "score": 0.907443642616272,
+      "sentiment": "Negative"
+    },
+    "text_sentiment_error": null,
+    "unified_emotion": {
+      "agreement": "low",
+      "disagreement": 0.7745735599482926,
+      "labels": {
+        "0": "sadness",
+        "1": "fear",
+        "2": "happiness",
+        "3": "anger"
+      },
+      "pred_id": 1,
+      "pred_label": "fear",
+      "probs": [
+        0.25207782548374563,
+        0.5226017985525665,
+        0.03946056131611027,
+        0.1858598146475776
+      ],
+      "sources": {
+        "audio": {
+          "intensity": 0.7440273761749268,
+          "pred_id": 1,
+          "pred_label": "fear",
+          "probs": [
+            0.04519352340040501,
+            0.9305897231782349,
+            0.0143395343886862,
+            0.009877219032673929
+          ],
+          "valence": 0.27786705620173013
+        },
+        "text": {
+          "normalized": "NEGATIVE",
+          "probs": [
+            0.4379676735401154,
+            0.1560161632299423,
+            0.062032326459884636,
+            0.34398383677005767
+          ],
+          "score": 0.907443642616272,
+          "sentiment": "Negative",
+          "valence": 0.09255635738372803
+        }
+      },
+      "w_text": 0.5267258601660816
+    },
+    "valence_audio": 0.27786705620173013,
+    "valence_text": 0.09255635738372803
+  },
+  "seconds": [
+    14.438,
+    13.641
+  ],
+  "status": 200,
+  "volatile_paths": [],
+  "warnings": []
+}

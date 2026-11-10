@@ -1,0 +1,131 @@
+{
+  "case": {
+    "audio": "dersten-kalacağım.m4a",
+    "file_field": "file",
+    "form": {
+      "speech_language": "tr"
+    },
+    "id": "analyze-emotion-v2__dersten-kalacagim",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-emotion-v2",
+    "query": {
+      "include_branches": "true"
+    },
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "branch_probabilities": {
+      "acoustic": {
+        "anger": 0.5243600473132675,
+        "fear": 0.28213070625389136,
+        "happiness": 0.10399695992326048,
+        "sadness": 0.08951228650958058
+      },
+      "multimodal_logistic": {
+        "anger": 0.3572313866925494,
+        "fear": 0.340156204982459,
+        "happiness": 0.061871823140857464,
+        "sadness": 0.24074058518413408
+      },
+      "multimodal_svm": {
+        "anger": 0.21310658500851898,
+        "fear": 0.12889423789828783,
+        "happiness": 0.18050213732920498,
+        "sadness": 0.4774970397639882
+      },
+      "text": {
+        "anger": 0.887989321530369,
+        "fear": 0.001224999184837456,
+        "happiness": 8.836819902857158e-05,
+        "sadness": 0.11069731108576499
+      },
+      "wavlm": {
+        "anger": 0.7945509772547843,
+        "fear": 0.014771530046755355,
+        "happiness": 0.0009560802865226546,
+        "sadness": 0.18972141241193774
+      }
+    },
+    "confidence": 0.431549613644911,
+    "duration_seconds": 7.68,
+    "prediction": "anger",
+    "probabilities": {
+      "anger": 0.431549613644911,
+      "fear": 0.17247790476658875,
+      "happiness": 0.15741025405134493,
+      "sadness": 0.2385622275371554
+    },
+    "processing_time_ms": 1000.07,
+    "request_id": "02ad9f7d-5e44-44d9-bd04-38f1469c04f8",
+    "transcript": "Sınav berbat geçti ya. Muhtemelen bu dönem uzatacağım. Bu dersten kalacağım."
+  },
+  "seconds": [
+    1.008,
+    1.027
+  ],
+  "status": 200,
+  "volatile_paths": [
+    "$.processing_time_ms",
+    "$.request_id"
+  ],
+  "warnings": []
+}

@@ -1,0 +1,131 @@
+{
+  "case": {
+    "audio": "bu-harika-bir-gun.m4a",
+    "file_field": "file",
+    "form": {
+      "speech_language": "tr"
+    },
+    "id": "analyze-emotion-v2__bu-harika-bir-gun",
+    "json": null,
+    "method": "POST",
+    "path": "/analyze-emotion-v2",
+    "query": {
+      "include_branches": "true"
+    },
+    "rules": {}
+  },
+  "is_json": true,
+  "meta": {
+    "base_url": "http://127.0.0.1:8085",
+    "captured_at": "2026-11-10T07:43:04.060442+00:00",
+    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "repeat": 2,
+    "server_info": {
+      "deps": {
+        "age_gender": "http://127.0.0.1:8056/analyze-age-gender",
+        "benchmark_inference": "http://127.0.0.1:8053",
+        "depression_service": "http://127.0.0.1:8057/analyze-depression",
+        "disease_service": "http://127.0.0.1:8054/analyze-disease",
+        "emotion_v2": "http://127.0.0.1:8059/analyze-audio",
+        "mental_fitness": "http://127.0.0.1:8055/analyze-mental",
+        "mental_fitness_validate_transcript": "http://127.0.0.1:8055/validate-transcript-meaning",
+        "text_to_sentiment": "http://127.0.0.1:8050/analyze",
+        "turkish_psych_classifier": "http://127.0.0.1:8058/analyze",
+        "voice_to_sentiment": "http://127.0.0.1:8052/analyze-audio",
+        "voice_to_text": "http://127.0.0.1:8051/transcribe"
+      },
+      "fusion": {
+        "audio_valence_weights": [
+          -1.0,
+          -0.6,
+          1.0,
+          -0.8
+        ],
+        "dynamic_fusion": true,
+        "w_text": 0.5,
+        "w_text_max": 0.8,
+        "w_text_min": 0.2
+      },
+      "message": "Fusion service. POST audio to /analyze-fused — runs STT, text+audio sentiment fusion signals, disease / mental-fitness / age-gender / depression, and optional benchmark_v2.",
+      "openapi": {
+        "redoc": "/redoc",
+        "schema": "/openapi.json",
+        "swagger_ui": "/docs"
+      },
+      "proxy": {
+        "age_gender": "POST /analyze-age-gender (multipart file) -> forwards to age_gender",
+        "benchmark_v2": "POST http://127.0.0.1:8053/predict (internal) — field 'audio', form 'transcript'",
+        "benchmark_v2_proxy": "POST /analyze-benchmark-v2 (multipart file, optional transcript) -> forwards to benchmark /predict",
+        "depression": "POST /analyze-depression (multipart file) -> forwards to depression_service",
+        "disease_service": "POST /analyze-disease (multipart file) -> forwards to disease_service",
+        "emotion_fusion": "POST /analyze-emotion-fusion (json: text_sentiment + audio) -> 4-class unified_emotion",
+        "emotion_v2": "POST /analyze-emotion-v2 (multipart file, optional speech_language/transcript) -> multimodal stacking emosyon v2",
+        "mental_fitness": "POST /analyze-mental-fitness (multipart file) -> forwards to mental_fitness",
+        "mental_fitness_transcript": "POST /analyze-mental-fitness/validate-transcript-meaning (json: {text, language}) -> forwards to mental_fitness /validate-transcript-meaning",
+        "text_audio_fusion": "POST /analyze-text-audio-fusion (multipart file+text) -> forwards to text_to_sentiment /analyze_fusion",
+        "text_to_sentiment": "POST /analyze-text-sentiment (json: {text}) -> forwards to text_to_sentiment",
+        "turkish_psych_signals": "POST /analyze-turkish-psych-signals (json: {text}) -> HF Türkçe psikolojik sinyal servisi",
+        "voice_to_sentiment": "POST /analyze-voice-sentiment (multipart file) -> forwards to voice_to_sentiment",
+        "voice_to_text": "POST /analyze-voice-to-text (multipart file) -> forwards to voice_to_text",
+        "wellness_companion_chat": "POST /wellness/companion/chat — json (metin) veya multipart (ses+messages); OpenAI orchestration + iç STT/mental-fitness; yanıt {message} veya {message, transcript}"
+      },
+      "togg_analyze": "POST /togg-analyze (multipart file) -> voice_to_sentiment (emosyon) + disease_service (WURSS), paralel"
+    }
+  },
+  "response": {
+    "branch_probabilities": {
+      "acoustic": {
+        "anger": 0.2561939402599944,
+        "fear": 0.6405041786458523,
+        "happiness": 0.048722597804501215,
+        "sadness": 0.054579283289651954
+      },
+      "multimodal_logistic": {
+        "anger": 3.8804260085309256e-05,
+        "fear": 0.003090618681563208,
+        "happiness": 0.9968562705030288,
+        "sadness": 1.4306555322542841e-05
+      },
+      "multimodal_svm": {
+        "anger": 0.10244824854436019,
+        "fear": 0.14234951902001383,
+        "happiness": 0.6724421904849104,
+        "sadness": 0.08276004195071564
+      },
+      "text": {
+        "anger": 3.5819588408647905e-06,
+        "fear": 5.039670102253331e-07,
+        "happiness": 0.9999958862904391,
+        "sadness": 2.7783709750856322e-08
+      },
+      "wavlm": {
+        "anger": 4.458753004687179e-06,
+        "fear": 0.9999954633901631,
+        "happiness": 9.999999900801078e-09,
+        "sadness": 6.785683224415693e-08
+      }
+    },
+    "confidence": 0.5533674875932046,
+    "duration_seconds": 5.803,
+    "prediction": "happiness",
+    "probabilities": {
+      "anger": 0.13815729329362975,
+      "fear": 0.17336269136618487,
+      "happiness": 0.5533674875932046,
+      "sadness": 0.1351125277469808
+    },
+    "processing_time_ms": 8162.15,
+    "request_id": "f3e82a5b-62d0-40f0-9223-27f7bb00ba48",
+    "transcript": "Bugün harika bir gün. Kendimi çok iyi hissediyorum. Her şey çok güzel olacak bugün."
+  },
+  "seconds": [
+    8.444,
+    0.975
+  ],
+  "status": 200,
+  "volatile_paths": [
+    "$.processing_time_ms",
+    "$.request_id"
+  ],
+  "warnings": []
+}
