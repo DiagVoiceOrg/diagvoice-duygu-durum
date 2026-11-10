@@ -3,6 +3,7 @@ torchaudio
 transformers
 safetensors
 fastapi
+httpx>=0.27,<1
 uvicorn
 flask
 pyyaml
@@ -16,7 +17,9 @@ opensmile
 praat-parselmouth
 openpyxl
 pandas
-scikit-learn
+# Modeller sklearn 1.6.1 (extratrees, stacking, audio_valence) ve 1.8.0 (is-sagligi) ile kaydedildi.
+# Sürüm sabit: sınırsız kurulum 1.9.x getiriyor ve pickle uyumsuzluk uyarısı veriyor.
+scikit-learn==1.8.0
 joblib
 matplotlib
 seaborn
