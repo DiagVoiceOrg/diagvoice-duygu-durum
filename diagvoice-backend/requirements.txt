@@ -19,6 +19,9 @@ openpyxl
 pandas
 # Modeller sklearn 1.6.1 (extratrees, stacking, audio_valence) ve 1.8.0 (is-sagligi) ile kaydedildi.
 # Sürüm sabit: sınırsız kurulum 1.9.x getiriyor ve pickle uyumsuzluk uyarısı veriyor.
+# numpy 2.4, librosa yin/pyin içindeki numba guvectorize çağrısında SIGSEGV veriyor
+# (instruction pointer 0). 2.2.6 ile aynı çağrı tamamlanıyor.
+numpy==2.2.6
 scikit-learn==1.8.0
 joblib
 matplotlib

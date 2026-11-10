@@ -1,7 +1,8 @@
 import contextlib
-import io
 import logging
 import os
+import subprocess
+import tempfile
 import threading
 import time
 from typing import Any
@@ -90,12 +91,40 @@ def _load_audio_models():
 
 
 def _load_wav_from_bytes(b: bytes) -> torch.Tensor:
-    wav, sr = torchaudio.load(io.BytesIO(b))
-    if wav.size(0) > 1:
-        wav = wav.mean(dim=0, keepdim=True)
-    if sr != WAV2VEC_BUNDLE.sample_rate:
-        wav = torchaudio.transforms.Resample(sr, WAV2VEC_BUNDLE.sample_rate)(wav)
-    return wav.to(DEVICE)
+    # torchaudio 2.11 load() torchcodec ister; imajda yok. m4a pipe üzerinde
+    # seek edilemediği için ffmpeg geçici dosyadan okur.
+    target_sr = int(WAV2VEC_BUNDLE.sample_rate)
+    with tempfile.NamedTemporaryFile(suffix=".audio") as src:
+        src.write(b)
+        src.flush()
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                src.name,
+                "-f",
+                "f32le",
+                "-acodec",
+                "pcm_f32le",
+                "-ac",
+                "1",
+                "-ar",
+                str(target_sr),
+                "pipe:1",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    if proc.returncode != 0 or not proc.stdout:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()[:300]
+        raise RuntimeError(f"ses çözülemedi: {err or 'boş çıktı'}")
+    samples = np.frombuffer(proc.stdout, dtype=np.float32).copy()
+    if samples.size == 0:
+        raise RuntimeError("ses çözülemedi: boş çıktı")
+    return torch.from_numpy(samples).unsqueeze(0).to(DEVICE)
 
 
 @torch.no_grad()
