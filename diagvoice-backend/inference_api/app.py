@@ -13,6 +13,7 @@ benchmark gerekmezse kök ortamda INFERENCE_API_URL boş bırakın.
 
 from __future__ import annotations
 
+import faulthandler
 import os
 import tempfile
 from pathlib import Path
@@ -21,6 +22,9 @@ from typing import Any
 from flask import Flask, jsonify, request
 
 from inference_api import engine
+
+# Native çökmede (SIGSEGV vb.) tüm thread'lerin Python yığınını stderr'e yaz.
+faulthandler.enable(all_threads=True)
 
 app = Flask(__name__)
 

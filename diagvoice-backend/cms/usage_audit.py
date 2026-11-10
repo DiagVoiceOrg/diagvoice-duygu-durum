@@ -283,6 +283,31 @@ def truncate_proxy_json(body: Any, proxy_name: str) -> Any:
     return {"proxy": proxy_name, "body": small}
 
 
+def bson_safe(value: Any, _depth: int = 0) -> Any:
+    """Mongo'ya yazılabilir kopya: dict anahtarları str, numpy → Python, tuple/set → list."""
+    if _depth > 40:
+        return str(value)
+    if value is None or isinstance(value, (str, bool, int, float, datetime, ObjectId, bytes)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): bson_safe(v, _depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [bson_safe(v, _depth + 1) for v in value]
+    tolist = getattr(value, "tolist", None)  # numpy ndarray / scalar
+    if callable(tolist):
+        try:
+            return bson_safe(tolist(), _depth + 1)
+        except Exception:
+            pass
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return bson_safe(item(), _depth + 1)
+        except Exception:
+            pass
+    return str(value)
+
+
 async def insert_fusion_audit(
     *,
     path: str,
@@ -306,10 +331,10 @@ async def insert_fusion_audit(
             "duration_ms": round(float(duration_ms), 2),
             "client_ip": (client_ip or "")[:200],
             "outcome": outcome_from_status(http_status),
-            "details": details,
+            "details": bson_safe(details),
         }
         if audio_recording:
-            doc["audio_recording"] = audio_recording
+            doc["audio_recording"] = bson_safe(audio_recording)
         await get_db().fusion_api_logs.insert_one(doc)
     except Exception:
         _log.exception("fusion_api_logs insert failed path=%s", path)
