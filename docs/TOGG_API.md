@@ -1,6 +1,6 @@
 # DiagVoice TOGG Analiz API'si
 
-Sürüm 1.1 · 11 Kasım 2026
+Sürüm 1.2 · 11 Kasım 2026
 
 ## 1. Genel bakış
 
@@ -180,7 +180,10 @@ Programatik kararlar için `code` alanını kullanın; `message` metni değişeb
 | `429` | `quota_exceeded` | Aylık kota doldu | DiagVoice ekibiyle iletişime geçin. |
 | `500` | `internal_error` | Sunucuda beklenmeyen hata | Bir kez tekrar deneyin. |
 | `502`, `503`, `504` | `upstream_error`, `service_unavailable`, `upstream_timeout` | Sunucu geçici olarak erişilemiyor veya yoğun | Artan bekleme ile tekrar deneyin. |
-| `524` | — | Yanıt 100 sn içinde üretilemedi (aşırı yoğunluk) | Artan bekleme ile tekrar deneyin. |
+| `524` | — | Yanıt 100 sn içinde üretilemedi (aşırı yoğunluk) | Artan bekleme ile tekrar deneyin veya iş API'sini kullanın (Bölüm 9). |
+| `404` | `not_found` | İş bulunamadı (süresi dolmuş veya başka anahtara ait) | `job_id`'yi kontrol edin. |
+| `429` | `too_many_jobs` | Anahtarın bekleyen iş sınırı doldu | Bekleyen işler bitince tekrar deneyin. |
+| `503` | `queue_full` | İş kuyruğu dolu | `Retry-After` saniye bekleyip tekrar deneyin. |
 
 ### Yanıt başlıkları
 
@@ -302,11 +305,33 @@ Limitler anahtar başınadır ve anahtar oluşturulurken DiagVoice tarafından b
 - Analiz edilecek her ses kaydı için bir istek gönderin; sürekli akış (streaming) desteklenmemektedir.
 - Kayıtlar yalnızca analiz amacıyla iletilmelidir; kayıt içeriğinde kişisel bilgi bulunmamasına özen gösterin.
 
-## 9. Sürümleme ve geçiş
+## 9. Asenkron iş API'si (isteğe bağlı)
+
+Normal kullanımda `POST /v1/analyze/togg` yeterlidir (yanıt ~0,25 sn). Uzun kayıtlarda, yoğun saatlerde veya sonucu
+beklemek istemediğiniz durumlarda işi kuyruğa gönderip sonucu sonradan alabilirsiniz. Bağlantı kopsa bile iş kaybolmaz.
+
+| Uç | Açıklama |
+|---|---|
+| `POST /v1/jobs` | Form: `file`, `kind=togg`, isteğe bağlı `webhook_url`. Sorgu: `wait` (0–30 sn). |
+| `GET /v1/jobs/{job_id}` | Durum: `queued`, `running`, `succeeded`, `failed`, `cancelled`. Sorgu: `wait` (0–30 sn). |
+| `DELETE /v1/jobs/{job_id}` | Henüz başlamamış işi iptal eder. |
+
+```bash
+curl -X POST "https://aiapi.diagvoice.com/v1/jobs?wait=10" \
+  -H "Authorization: Bearer $DIAGVOICE_API_KEY" \
+  -F "kind=togg" -F "file=@kayit.m4a;type=audio/mp4"
+```
+
+- İş `wait` süresi içinde biterse **200** ve sonuç döner; bitmezse **202**, `job_id` ve kuyruktaki sıra (`position`) döner.
+- Sonuç `result` alanında, `POST /v1/analyze/togg` yanıtıyla aynı biçimdedir. Hata durumunda `error` alanı doludur.
+- Sonuçlar 24 saat saklanır.
+- **Webhook**: `webhook_url` verilirse iş bitince bu adrese JSON `{job_id, status, result, error}` POST edilir. Adres `https://` ile başlamalı ve herkese açık olmalıdır. İstek gövdesi `X-DiagVoice-Signature: sha256=<HMAC-SHA256>` başlığıyla imzalanır; imza anahtarı DiagVoice ekibince ayrıca iletilir.
+
+## 10. Sürümleme ve geçiş
 
 - `/v1` altındaki uçlarda mevcut alanların adı ve anlamı değişmez. Yanıtlara yeni alanlar eklenebilir; istemcilerin bilinmeyen alanları yok sayması gerekir.
 - **Eski uç (`POST /togg-analyze`)**: Geçiş süresince anahtarsız çalışmaya devam eder; yanıtında `partial` alanı yoktur. Geçiş tamamlandığında bu uç kapatılacak, öncesinde bildirim yapılacaktır. Yeni entegrasyonlarda yalnızca `/v1/analyze/togg` kullanın.
 
-## 10. İletişim
+## 11. İletişim
 
 Teknik sorular, anahtar talepleri ve entegrasyon desteği için DiagVoice ekibiyle iletişime geçin.

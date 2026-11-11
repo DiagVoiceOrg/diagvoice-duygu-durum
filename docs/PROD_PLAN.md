@@ -5,6 +5,27 @@
 > Kapsam (bu tur): API key/auth/rate limit, model registry, konteyner yapısı, Redis kuyruk, frontend.
 > Sonraki tur: yük testi, izleme/metrik ayrıntıları.
 
+## Durum (2026-11-11)
+
+| Faz | Durum | Not |
+|---|---|---|
+| F0 | ✅ | Golden 83/83 (prod'a karşı). Dockerfile `requirements.lock`'tan kurar. |
+| F1 | ✅ kod · ⏳ sunucu | `fusion_service/apikeys/`, `/v1`, admin uçları, zayıf sır kontrolü. Rate limit/kota Redis'te (REDIS_URL yoksa bellek). |
+| F2 | ✅ kod · ⏳ sunucu | `registry.yaml` + `dv_worker` (gpu/cpu, SHA256, `/ready`). Servis kodları değişmeden worker içinde; CPU worker'da yerelde eski çağrıyla 16/16 birebir aynı. `scripts/new_model.py`, `scripts/hash_models.py`, `docs/ADDING_A_MODEL.md`. |
+| F3 | ✅ kod · ⏳ sunucu | `docker-compose.yml`: gateway + worker-gpu + worker-cpu + redis (aynı image). Geri dönüş: `docker-compose.single.yml`. `scripts/deploy.sh`, log rotasyonu. |
+| F4 | ✅ kod · ⏳ sunucu | `fusion_service/jobs/`: `/v1/jobs` (wait, iptal, webhook + HMAC, SSRF koruması, çökme sonrası yeniden kuyruk). |
+| F5 | 🟡 | Admin'e API anahtarları sayfası. Tam yeniden tasarım (Tailwind/shadcn) yapılmadı. |
+| Yük testi | ✅ | `loadtest/`, iki rapor (`docs/*Raporu*.pdf`). |
+
+Plandan bilinçli sapmalar:
+- **Ayrı gateway image'ı (torch'suz) yok**: üç servis aynı image'ı kullanıyor. İmage boyutu tek seferlik; ayrıştırma sonraya.
+- **`PreparedAudio` (sesi bir kez çözme) yok**: her model kendi ön işlemesini yapıyor (golden uyumu için). CPU darboğazının asıl çözümü bu; sonraki adım.
+- **HF modelleri `HF_HUB_OFFLINE` ile önceden indirilmiş değil**: volume'daki önbellekten yükleniyor.
+- **Model dosyaları sürüm klasörlerine taşınmadı**: registry yolları mevcut düz düzeni gösteriyor; yeni modeller `<id>/v1/` düzeninde.
+- **Wellness'taki IP limiti** Redis'e taşınmadı.
+
+Dağıtım: `docs/DEPLOY_F1_F4_PROMPT.md`.
+
 ## 0. Başlangıç noktası
 
 | Konu | Şu an | Sorun |
