@@ -137,3 +137,81 @@ export async function fetchUsageLogAudio(token, logId) {
   });
   return data;
 }
+
+/* ---------- API anahtarları (müşteriler / anahtarlar) — admin JWT gerekli ---------- */
+
+const authHeaders = (token) => ({ headers: { Authorization: `Bearer ${token}` } });
+
+export async function listApiScopes(token) {
+  const { data } = await axios.get(`${base()}/admin/scopes`, authHeaders(token));
+  return data;
+}
+
+export async function listApiClients(token) {
+  const { data } = await axios.get(`${base()}/admin/clients`, authHeaders(token));
+  return data;
+}
+
+export async function createApiClient(token, body) {
+  const { data } = await axios.post(`${base()}/admin/clients`, body, authHeaders(token));
+  return data;
+}
+
+export async function updateApiClient(token, clientId, body) {
+  const { data } = await axios.patch(
+    `${base()}/admin/clients/${encodeURIComponent(clientId)}`,
+    body,
+    authHeaders(token),
+  );
+  return data;
+}
+
+export async function listApiKeys(token, clientId) {
+  const { data } = await axios.get(`${base()}/admin/keys`, {
+    ...authHeaders(token),
+    params: clientId ? { client_id: clientId } : {},
+  });
+  return data;
+}
+
+/** Yanıttaki `api_key` yalnızca bir kez döner; hiçbir yerde saklanmamalı. */
+export async function createApiKey(token, clientId, body) {
+  const { data } = await axios.post(
+    `${base()}/admin/clients/${encodeURIComponent(clientId)}/keys`,
+    body,
+    authHeaders(token),
+  );
+  return data;
+}
+
+export async function updateApiKey(token, keyId, body) {
+  const { data } = await axios.patch(`${base()}/admin/keys/${encodeURIComponent(keyId)}`, body, authHeaders(token));
+  return data;
+}
+
+export async function revokeApiKey(token, keyId) {
+  const { data } = await axios.post(
+    `${base()}/admin/keys/${encodeURIComponent(keyId)}/revoke`,
+    null,
+    authHeaders(token),
+  );
+  return data;
+}
+
+/** Yanıttaki yeni `api_key` yalnızca bir kez döner. */
+export async function rotateApiKey(token, keyId) {
+  const { data } = await axios.post(
+    `${base()}/admin/keys/${encodeURIComponent(keyId)}/rotate`,
+    null,
+    authHeaders(token),
+  );
+  return data;
+}
+
+export async function fetchApiKeyUsage(token, keyId, days = 30) {
+  const { data } = await axios.get(`${base()}/admin/keys/${encodeURIComponent(keyId)}/usage`, {
+    ...authHeaders(token),
+    params: { days },
+  });
+  return data;
+}
