@@ -1,3 +1,8 @@
+# YEDEK DÜZEN — tek konteyner, her model ayrı süreç (11 Kasım 2026'ya kadar prod'da çalışan yapı).
+# Asıl düzen: docker-compose.yml (gateway + worker-gpu + worker-cpu + redis).
+# scripts/deploy.sh yeni düzen sağlıklı açılmazsa otomatik olarak buna döner. Elle:
+#   docker compose down && docker compose -f docker-compose.single.yml up -d
+#
 # Backend (GPU sunucusu). FE ayrı: Coolify (CPU sunucusu) app/ klasörünü build eder.
 #
 #   İnternet ──443──▶ host nginx (aiapi.diagvoice.com, TLS) ──▶ 127.0.0.1:8085 ──▶ backend
@@ -16,6 +21,7 @@ services:
     build:
       context: ./diagvoice-backend
       dockerfile: Dockerfile
+    image: diagvoice-backend:latest   # docker-compose.yml ile aynı image → geri dönüşte yeniden build yok
     restart: unless-stopped
     deploy:
       resources:
@@ -30,6 +36,8 @@ services:
       - .env
     environment:
       HF_HUB_DISABLE_XET: "1"
+      # Yedek düzen: 10 süreçli kanıtlanmış yapı (supervisord.conf). Tek konteyner + tek worker denemek için: worker
+      WORKER_MODE: ${SINGLE_WORKER_MODE:-legacy}
       # production: JWT_SECRET / CMS_ADMIN_PASSWORD / API_KEY_PEPPER zayıfsa uygulama başlamaz
       DIAGVOICE_ENV: ${DIAGVOICE_ENV:-production}
       CMS_ENABLED: ${CMS_ENABLED:-1}

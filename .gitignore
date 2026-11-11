@@ -31,3 +31,4 @@ diagvoice-backend/**/models/
 loadtest/results/
 loadtest/monitor/
 diagvoice-backend/.cache/
+deploy-logs/

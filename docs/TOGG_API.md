@@ -33,6 +33,7 @@ X-API-Key: dv_sk_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 - **Anahtarı araç içi uygulamaya veya mobil uygulamaya gömmeyin**; uygulama paketinden çıkarılabilir. Önerilen akış: araç → TOGG backend'i → DiagVoice API.
 - Anahtar sızdığından şüphelenirseniz DiagVoice ekibine bildirin; anahtar iptal edilip yenisi verilir.
 - Anahtarın bilgileri ve limitleri `GET /v1/me` ile görülebilir.
+- İsteklerde uygulamanızı tanıtan bir `User-Agent` başlığı gönderin (ör. `TOGG-Backend/1.0`). Bazı HTTP kütüphanelerinin varsayılan `User-Agent` değeri (ör. Python `urllib`) ağ katmanındaki bot korumasına takılıp `403` (gövdede `error code: 1010`) alabilir.
 
 ## 3. İstek
 

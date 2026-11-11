@@ -24,7 +24,7 @@ Plandan bilinçli sapmalar:
 - **Model dosyaları sürüm klasörlerine taşınmadı**: registry yolları mevcut düz düzeni gösteriyor; yeni modeller `<id>/v1/` düzeninde.
 - **Wellness'taki IP limiti** Redis'e taşınmadı.
 
-Dağıtım: `docs/DEPLOY_F1_F4_PROMPT.md`.
+Dağıtım: `scripts/deploy.sh` (10 model kontrolü + otomatik geri dönüş). Canlıya alma promptu: `docs/DEPLOY_LIVE_PROMPT.md`.
 
 ## 0. Başlangıç noktası
 
