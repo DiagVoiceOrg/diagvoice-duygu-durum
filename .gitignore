@@ -32,3 +32,4 @@ loadtest/results/
 loadtest/monitor/
 diagvoice-backend/.cache/
 deploy-logs/
+data/jobs/
