@@ -81,12 +81,14 @@ async def _enforce_limits(key: ApiKey) -> dict:
                        {**headers, "Retry-After": str(d.retry_after)})
     quota = key.limit("monthly_quota")
     if quota > 0:
-        if not limiter.has_monthly(key.key_id):
+        async def _load_month() -> int:
             try:
-                limiter.seed_monthly(key.key_id, await get_store().monthly_count(key.key_id, limiter.month()))
+                return await get_store().monthly_count(key.key_id, limiter.month())
             except Exception:
                 _log.exception("aylık kullanım okunamadı key_id=%s", key.key_id)
-                limiter.seed_monthly(key.key_id, 0)
+                return 0
+
+        await limiter.ensure_monthly(key.key_id, _load_month)
         q = await limiter.quota(key.key_id, quota)
         if not q.ok:
             raise ApiError(429, "quota_exceeded", "Aylık kota doldu.", headers)

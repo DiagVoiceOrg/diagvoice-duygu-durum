@@ -25,6 +25,36 @@ MODELS: dict[str, dict[str, str]] = {
 
 ALL = "*"
 
+# registry.yaml'da `v1:` bloğu olan modeller: /v1/analyze/<id> ucu ve model:<id> scope'u otomatik açılır.
+# (Yukarıdaki sabit liste mevcut, elle yazılmış uçlar içindir.)
+REGISTRY_V1: dict[str, dict] = {}
+
+
+def _load_registry_models() -> None:
+    try:
+        from dv_worker import registry as _R
+
+        reg = _R.load()
+    except Exception:  # registry okunamazsa yalnızca sabit uçlar açık kalır
+        return
+    for m in reg.models.values():
+        if not m.v1 or not m.enabled:
+            continue
+        scope = f"model:{m.id}"
+        if scope in MODELS:
+            continue
+        path = f"/v1/analyze/{m.id}"
+        MODELS[scope] = {"title": m.title, "path": path}
+        REGISTRY_V1[m.id] = {
+            "group": m.group,
+            "endpoint": str(m.v1.get("endpoint", "/analyze")),
+            "input": str(m.v1.get("input", "audio")),
+            "title": m.title,
+        }
+
+
+_load_registry_models()
+
 # Eski (sürümsüz) uçlar → scope. Bu yollarda anahtar F1 geçiş döneminde isteğe bağlıdır (API_KEY_LEGACY_MODE).
 LEGACY_PATHS: dict[str, str] = {
     "/togg-analyze": "analyze:togg",

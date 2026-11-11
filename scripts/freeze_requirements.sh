@@ -4,7 +4,7 @@
 # Çıktı: diagvoice-backend/requirements.lock  (git'e eklenmeli)
 set -eu
 
-SERVICE="${SERVICE:-backend}"
+SERVICE="${SERVICE:-worker-gpu}"   # torch dahil tüm paketlerin olduğu servis
 OUT="diagvoice-backend/requirements.lock"
 
 if ! docker compose ps --status running --services | grep -qx "$SERVICE"; then

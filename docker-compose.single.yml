@@ -1,0 +1,48 @@
+# Backend (GPU sunucusu). FE ayrı: Coolify (CPU sunucusu) app/ klasörünü build eder.
+#
+#   İnternet ──443──▶ host nginx (aiapi.diagvoice.com, TLS) ──▶ 127.0.0.1:8085 ──▶ backend
+#
+# - backend dışarıya açık DEĞİL: 8085 sadece 127.0.0.1'e bağlı; dış erişim yalnızca host nginx üzerinden.
+#   nginx örneği: deploy/nginx/aiapi.diagvoice.com.conf
+# - Ortam: yalnızca kök .env (diagvoice-backend/.env kullanılmaz). .env değişince restart yetmez:
+#   docker compose up -d --force-recreate backend
+# - Kod: ./diagvoice-backend -> /app volume ile anında yansır (hot reload yok; kod değişince backend restart).
+# - HF önbelleği: bind mount /app altında kaybolmasın diye ayrı volume.
+# - GPU: NVIDIA sürücüsü + nvidia-container-toolkit gerekir. Kontrol:
+#   docker compose exec backend python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+#   GPU'suz makinede (yerel geliştirme) `deploy:` bloğunu kaldırın; servisler CPU'ya düşer.
+services:
+  backend:
+    build:
+      context: ./diagvoice-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "127.0.0.1:8085:8085"   # sadece makine içi; dış dünya host nginx üzerinden gelir
+    env_file:
+      - .env
+    environment:
+      HF_HUB_DISABLE_XET: "1"
+      # production: JWT_SECRET / CMS_ADMIN_PASSWORD / API_KEY_PEPPER zayıfsa uygulama başlamaz
+      DIAGVOICE_ENV: ${DIAGVOICE_ENV:-production}
+      CMS_ENABLED: ${CMS_ENABLED:-1}
+      MONGO_URI: ${MONGO_URI:?MONGO_URI tanımlı olmalı — kök .env içinde harici Mongo bağlantı dizesi}
+      MONGO_DB: ${MONGO_DB:-diagvoice_cms}
+      JWT_SECRET: ${JWT_SECRET:-dev-change-me}
+      CMS_ADMIN_EMAIL: ${CMS_ADMIN_EMAIL:-admin@localhost}
+      CMS_ADMIN_PASSWORD: ${CMS_ADMIN_PASSWORD:-admin123}
+      AUDIT_AUDIO_STORAGE_DIR: /data/audio_recordings
+    volumes:
+      - ./diagvoice-backend:/app
+      - backend_hf_cache:/app/.cache
+      - ./data/audio_recordings:/data/audio_recordings
+
+volumes:
+  backend_hf_cache:

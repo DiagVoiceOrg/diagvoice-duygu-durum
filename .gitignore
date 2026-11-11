@@ -30,3 +30,4 @@ diagvoice-backend/**/models/
 # Yük testi çıktıları
 loadtest/results/
 loadtest/monitor/
+diagvoice-backend/.cache/

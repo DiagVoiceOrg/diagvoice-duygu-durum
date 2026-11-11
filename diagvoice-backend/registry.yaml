@@ -1,0 +1,176 @@
+# DiagVoice model kaydı — model yollarının ve sürümlerinin TEK kaynağı (PROD_PLAN F2).
+#
+# Worker (dv_worker) başlarken bu dosyayı okur:
+#   1. Kendi grubundaki (gpu | cpu) servisleri seçer.
+#   2. Artefakt dosyalarının SHA256'sını doğrular; uyuşmayan servis YÜKLENMEZ, /ready bunu raporlar.
+#   3. `env` eşlemeleriyle servis koduna yolları verir, servisi tek süreçte import eder ve
+#      `/<id>` öneki altına bağlar (ör. worker-gpu:8060/emotion_audio/analyze-audio).
+#
+# Yol kuralı: `path` değerleri MODEL_ROOT'a göre (varsayılan /app/models). Mutlak yol da yazılabilir.
+# Yeni model: docs/ADDING_A_MODEL.md
+#
+# Alanlar:
+#   group      gpu | cpu        hangi worker sürecinde yükleneceği
+#   module     servis modülü (paket yolu veya backend köküne göre .py dosyası)
+#   sys_path   modülün çıplak (bare) import ettiği yardımcıların klasörleri
+#   startup    import sonrası çağrılacak yükleme fonksiyonları (FastAPI startup hook'ları bağlanınca çalışmaz)
+#   lifespan   modülün FastAPI lifespan'i (worker yaşadıkça açık tutulur)
+#   require    yükleme sonrası None olmaması gereken modül değişkenleri (sessiz yükleme hatalarını yakalar)
+#   artifacts  ad → {path, sha256, env}; env verilirse değişkene mutlak yol yazılır
+#   env        sabit ayarlar (HF model id'leri vb.)
+#   health     /ready kontrolünde çağrılacak yol (isteğe bağlı)
+#   v1         gateway'de /v1/analyze/<id> ucunu ve model:<id> scope'unu açar
+#              endpoint: worker'daki yol · input: audio | text
+
+model_root: "{backend}/models"
+
+models:
+  text_sentiment:
+    title: Metin duygu analizi (+ metin-ses füzyonu)
+    version: v1
+    group: gpu
+    module: text_to_sentiment.app
+    require: [sentiment_pipeline, wav2vec_model]
+    startup: [_load_audio_models]
+    artifacts:
+      audio_valence:
+        path: audio_valence_model.joblib
+        sha256: 29d17ca09dec72e32a8f31ee15cee0e7e25213eab97cf6cdb99b46b1b5cf2012
+        env: AUDIO_VALENCE_MODEL_PATH
+    env:
+      TEXT_SENTIMENT_MODEL: kaixkhazaki/turkish-sentiment
+
+  stt:
+    title: Konuşma tanıma (Whisper)
+    version: large-v3-turbo
+    group: gpu
+    module: voice_to_text.app
+    require: [speech_to_text_model, processor]
+    env:
+      VOICE_TO_TEXT_MODEL: openai/whisper-large-v3-turbo
+
+  emotion_audio:
+    title: Ses emosyonu (WavLM)
+    version: v6
+    group: gpu
+    module: voice_to_sentiment.app
+    require: [model]
+    artifacts:
+      checkpoint:
+        path: wavlm_v6_multicrop_ema_best.pt
+        sha256: 638f91464dc768b408dcf53b0ee06a8360eeb15c1c085bf9c539aaaf7f3353af
+        env: AUDIO_SENTIMENT_CKPT
+    env:
+      AUDIO_SENTIMENT_BACKBONE: microsoft/wavlm-base-plus
+
+  disease_wurss:
+    title: WURSS sağlık sinyali (Wav2Vec2)
+    version: v1
+    group: gpu
+    module: disease_service.app
+    require: [model, feature_extractor]
+    artifacts:
+      config:
+        path: usye/config.json
+        sha256: 16c5839ea27c5a2f8aa9a5cfc2bf6309eeb817e7d3d79a180e860f427e860d9d
+      weights:
+        path: usye/model.safetensors
+        sha256: 053b0ac9ec97159392fed8703961bfd447b5b43dc8735aa57019422d965f1625
+      preprocessor:
+        path: usye/preprocessor_config.json
+        sha256: 8cdfd65ff4115423185a1512bdae100e2e0cd744f5b322417429944aaafd0827
+    env_dirs:
+      DISEASE_MODEL_DIR: usye
+
+  depression:
+    title: Depresyon (Wav2Vec2)
+    version: v1
+    group: gpu
+    module: depression_service.app
+    require: [model, feature_extractor]
+    artifacts:
+      checkpoint:
+        path: depresyon.pt
+        sha256: 7db0549e7fabf41e9f428e246acc6109f76db3a1298c996e31d12deee296a7eb
+        env: DEPRESSION_MODEL_PATH
+    env:
+      DEPRESSION_BACKBONE: facebook/wav2vec2-base
+
+  age_gender:
+    title: Yaş ve cinsiyet
+    version: v1
+    group: gpu
+    module: age-gender-model/app.py
+    require: [model]
+    artifacts:
+      checkpoint:
+        path: model.pt
+        sha256: baa325e0a60d048e47f6b39cbf55c90f27ed75b47cdb3c8c12bb2afa76177381
+      labels:
+        path: labels.json
+        sha256: 18d1783c47ae0410df631356f877ff3c6c73065033b2db621a594d3da47b7a97
+    env_dirs:
+      AGE_GENDER_MODEL_DIR: .
+
+  turkish_psych:
+    title: Türkçe psikolojik sinyaller
+    version: v1
+    group: gpu
+    module: mental_fitness_turkish_psych_classifier/app.py
+    require: [_classifier]
+    startup: [_startup]
+    artifacts:
+      weights:
+        path: mental-fitness-forgpt.safetensors
+        sha256: d15b7d487f5b770e28bcfd4368338269a4ccc135a736abbe3e9602d8c8db238b
+        env: TURKISH_PSYCH_WEIGHTS_PATH
+
+  emotion_v2:
+    title: Çok kipli emosyon v2
+    version: v1
+    group: gpu
+    module: emotion_v2/app.py
+    sys_path: [emotion_v2]
+    lifespan: lifespan
+    artifacts:
+      stacking:
+        path: final_multimodal_stacking_model.joblib
+        sha256: e2bb5e58ea33f20c81172cce9e5e2022747c6e11f86e39dec9ec9d1419a7281b
+        env: EMOTION_V2_MODEL_PATH
+    env_urls:
+      # STT aynı worker sürecindeki stt servisine gider
+      VOICE_TO_TEXT_URL: /stt/transcribe
+
+  mental_fitness:
+    title: Mental fitness (ExtraTrees)
+    version: v1
+    group: cpu
+    module: mental_fitness/app.py
+    require: [_model]
+    sys_path: [mental_fitness]
+    artifacts:
+      model:
+        path: extratreesclassifier.joblib
+        sha256: 426fd5147f2340731ff73996e501aca55549e11d62883a7c5eab1eb20e64a78c
+        env: MENTAL_FITNESS_MODEL_PATH
+
+  occupational_health:
+    title: İş sağlığı (benchmark v2)
+    version: v1
+    group: cpu
+    module: dv_worker.inference_api_adapter
+    startup: [warmup]
+    artifacts:
+      model:
+        path: is-sagligi.joblib
+        sha256: d17caf84a5ff70e3e6c6e28e5a61dd0dac9b29036d40ab36163581787faae7cc
+        env: DIAGVOICE_MODEL
+    env:
+      DIAGVOICE_BENCHMARK_CONFIG: "{backend}/inference_api/config.docker.yaml"
+      DIAGVOICE_STRICT_FEATURES: "1"
+    health: /health
+
+# Gateway profilleri (fusion bu sırayla çağırır; F4 kuyruğu da bunu kullanır)
+pipelines:
+  togg: [emotion_audio, disease_wurss]
+  fused: [stt, text_sentiment, emotion_audio, disease_wurss, mental_fitness, age_gender, depression, occupational_health]

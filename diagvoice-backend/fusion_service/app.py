@@ -122,7 +122,21 @@ async def _app_lifespan(_app: fastapi.FastAPI):
                     "CMS seed başarısız — admin girişi için `users` koleksiyonu ve MONGO_URI / "
                     "CMS_ADMIN_EMAIL / CMS_ADMIN_PASSWORD ortam değişkenlerini kontrol et."
                 )
-        yield
+        _job_runner = None
+        if os.environ.get("REDIS_URL") and os.environ.get("JOBS_RUNNER_ENABLED", "1") != "0":
+            from fusion_service.jobs.queue import JobRunner
+
+            try:
+                _job_runner = JobRunner(_V1_HANDLERS)
+                await _job_runner.start()
+            except Exception:
+                logging.getLogger(__name__).exception("İş kuyruğu başlatılamadı (REDIS_URL kontrol et)")
+                _job_runner = None
+        try:
+            yield
+        finally:
+            if _job_runner is not None:
+                await _job_runner.stop()
     finally:
         if _upstream_httpx is not None:
             await _upstream_httpx.aclose()
@@ -845,6 +859,43 @@ async def _proxy_json(
         **_proxy_upstream_error_detail(body if isinstance(body, dict) else {"detail": body}, r.status_code),
     }
     return JSONResponse(status_code=r.status_code, content=body)
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    """Süreç ayakta mı (docker healthcheck)."""
+    return {"ok": True}
+
+
+@app.get("/ready", include_in_schema=False)
+async def ready():
+    """Worker'lar ve Redis hazır mı. Model bazında yalnızca durum döner (hata ayrıntısı worker loglarında)."""
+    checks: Dict[str, Any] = {}
+    ok = True
+    client = _upstream_client()
+    for name, env in (("worker_gpu", "WORKER_GPU_URL"), ("worker_cpu", "WORKER_CPU_URL")):
+        base = os.environ.get(env, "").strip().rstrip("/")
+        if not base:
+            continue
+        try:
+            r = await client.get(f"{base}/ready", timeout=5.0)
+            body = r.json()
+            models = {k: v.get("state") for k, v in (body.get("models") or {}).items()}
+            checks[name] = {"ready": bool(body.get("ready")), "models": models}
+            ok = ok and bool(body.get("ready"))
+        except Exception as e:
+            checks[name] = {"ready": False, "error": type(e).__name__}
+            ok = False
+    if os.environ.get("REDIS_URL"):
+        try:
+            from fusion_service.jobs.store import get_redis
+
+            await get_redis().ping()
+            checks["redis"] = {"ready": True}
+        except Exception as e:
+            checks["redis"] = {"ready": False, "error": type(e).__name__}
+            ok = False
+    return JSONResponse({"ready": ok, "checks": checks}, status_code=200 if ok else 503)
 
 
 @app.get("/", response_model=ServiceInfoResponse, tags=["meta"], include_in_schema=False)
@@ -1608,7 +1659,7 @@ from types import SimpleNamespace as _NS
 
 from fusion_service.v1 import build_router as _build_v1_router
 
-app.include_router(_build_v1_router(_NS(
+_V1_HANDLERS = _NS(
     togg_analyze=togg_analyze,
     analyze_fused=analyze_fused,
     proxy_analyze_voice_to_text=proxy_analyze_voice_to_text,
@@ -1621,7 +1672,9 @@ app.include_router(_build_v1_router(_NS(
     proxy_analyze_benchmark_v2=proxy_analyze_benchmark_v2,
     proxy_analyze_text_sentiment=proxy_analyze_text_sentiment,
     proxy_analyze_turkish_psych_signals=proxy_analyze_turkish_psych_signals,
-)))
+    upstream_client=_upstream_client,
+)
+app.include_router(_build_v1_router(_V1_HANDLERS))
 
 
 if __name__ == "__main__":

@@ -52,9 +52,9 @@ class KeyPatch(BaseModel):
     expires_at: Optional[datetime] = None
 
 
-def _key_out(k: ApiKey) -> dict[str, Any]:
+async def _key_out(k: ApiKey) -> dict[str, Any]:
     d = k.public()
-    d["active_requests"] = limiter.active(k.key_id)
+    d["active_requests"] = await limiter.active(k.key_id)
     return d
 
 
@@ -108,12 +108,12 @@ async def create_key(client_id: str, body: KeyIn, admin: Admin) -> dict:
     )
     rec.client_name = client["name"]
     await store.insert_key(rec)
-    return {"api_key": raw, "warning": "Bu anahtar yalnızca şimdi gösterilir; güvenli bir yerde saklayın.", "key": _key_out(rec)}
+    return {"api_key": raw, "warning": "Bu anahtar yalnızca şimdi gösterilir; güvenli bir yerde saklayın.", "key": await _key_out(rec)}
 
 
 @router.get("/keys")
 async def list_keys(_: Admin, client_id: Optional[str] = Query(None)) -> dict:
-    return {"items": [_key_out(k) for k in await get_store().list_keys(client_id)]}
+    return {"items": [await _key_out(k) for k in await get_store().list_keys(client_id)]}
 
 
 async def _get_or_404(key_id: str) -> ApiKey:
@@ -142,14 +142,14 @@ async def patch_key(key_id: str, body: KeyPatch, _: Admin) -> dict:
         fields["expires_at"] = body.expires_at
     if not fields:
         raise HTTPException(400, "Değişecek alan yok")
-    return _key_out(await get_store().update_key(key_id, fields))
+    return await _key_out(await get_store().update_key(key_id, fields))
 
 
 @router.post("/keys/{key_id}/revoke")
 async def revoke_key(key_id: str, _: Admin) -> dict:
     await _get_or_404(key_id)
     k = await get_store().update_key(key_id, {"status": "revoked", "revoked_at": datetime.now(timezone.utc)})
-    return _key_out(k)
+    return await _key_out(k)
 
 
 @router.post("/keys/{key_id}/rotate", status_code=201)
@@ -167,7 +167,7 @@ async def rotate_key(key_id: str, admin: Admin) -> dict:
     await store.insert_key(rec)
     await store.update_key(key_id, {"status": "revoked", "revoked_at": datetime.now(timezone.utc)})
     return {"api_key": raw, "warning": "Bu anahtar yalnızca şimdi gösterilir; eski anahtar iptal edildi.",
-            "key": _key_out(rec), "revoked_key_id": key_id}
+            "key": await _key_out(rec), "revoked_key_id": key_id}
 
 
 @router.get("/keys/{key_id}/usage")
@@ -176,7 +176,7 @@ async def key_usage(key_id: str, _: Admin, days: int = Query(30, ge=1, le=366)) 
     rows = await get_store().usage(key_id, days)
     month = limiter.month()
     return {
-        "key": _key_out(k),
+        "key": await _key_out(k),
         "month": month,
         "month_total": sum(r["count"] for r in rows if r["date"].startswith(month)),
         "daily": rows,

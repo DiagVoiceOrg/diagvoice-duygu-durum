@@ -67,12 +67,15 @@ COPY age-gender-model /app/age-gender-model
 COPY depression_service /app/depression_service
 COPY mental_fitness_turkish_psych_classifier /app/mental_fitness_turkish_psych_classifier
 COPY emotion_v2 /app/emotion_v2
+COPY dv_worker /app/dv_worker
+COPY audio_io.py registry.yaml supervisord.conf supervisord.worker.conf docker-entrypoint.sh /app/
 COPY models /app/models
 COPY test-data /app/test-data
 
 # Ortam: docker-compose kök .env (env_file) veya orchestrator -e. /app/.env kopyalanmaz.
-# Ana API (fusion + CMS); mikro servisler konteyner içi 8050–8058.
+# Ana API (fusion + CMS) 8085. Modeller (WORKER_MODE=worker, varsayılan): worker-gpu 8060, worker-cpu 8061
+# — registry.yaml. Eski düzen (her model ayrı süreç, 8050–8059): WORKER_MODE=legacy.
 EXPOSE 8085
 
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+CMD ["sh", "/app/docker-entrypoint.sh"]
 

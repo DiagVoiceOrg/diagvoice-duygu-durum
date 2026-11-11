@@ -17,6 +17,7 @@ os.environ["AUDIT_AUDIO_STORAGE_ENABLED"] = "0"
 os.environ.setdefault("MONGO_URI", "mongodb://127.0.0.1:1")
 os.environ["JWT_SECRET"] = "test-jwt-secret-0123456789abcdef0123456789"
 os.environ.pop("DIAGVOICE_ENV", None)
+os.environ.pop("REDIS_URL", None)  # konteynerde çalışırken gerçek Redis'e dokunma (testler fakeredis kullanır)
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
@@ -216,7 +217,7 @@ def test_concurrency_limit(env):
             assert codes == [200, 429]
             limited = r1 if r1.status_code == 429 else r2
             assert limited.json()["error"]["code"] == "concurrency_limited"
-            assert limiter.active(key_id) == 0  # slot geri bırakıldı
+            assert await limiter.active(key_id) == 0  # slot geri bırakıldı
     run(t())
 
 
@@ -275,6 +276,34 @@ def test_v1_validation_error_format():
             assert r.status_code == 422
             assert r.json()["error"]["code"] == "invalid_request"
     run(t())
+
+
+# ----------------------------------------------------------------------------- registry'den otomatik uçlar
+def test_registry_model_route(monkeypatch):
+    from fusion_service.apikeys import scopes as S
+
+    monkeypatch.setitem(S.REGISTRY_V1, "voice_fatigue", {"group": "cpu", "endpoint": "/analyze", "input": "audio", "title": "VF"})
+    monkeypatch.setitem(S.MODELS, "model:voice_fatigue", {"title": "VF", "path": "/v1/analyze/voice_fatigue"})
+    monkeypatch.setitem(S.V1_PATHS, "/v1/analyze/voice_fatigue", "model:voice_fatigue")
+    seen = {}
+
+    class FakeClient:
+        async def post(self, url, files=None, data=None, json=None):
+            seen["url"] = url
+            return httpx.Response(200, json={"score": 0.5})
+
+    monkeypatch.setattr(A, "_upstream_httpx", FakeClient())  # _upstream_client() bunu döner
+
+    async def t():
+        async with client() as c:
+            raw, _, _ = await make_key(c, scopes=["model:voice_fatigue"])
+            r = await togg(c, raw, path="/v1/analyze/voice_fatigue")
+            return r
+
+    r = run(t())
+    assert r.status_code == 200, r.text
+    assert r.json() == {"score": 0.5}
+    assert seen["url"].endswith(":8061/voice_fatigue/analyze")
 
 
 # ----------------------------------------------------------------------------- sır kontrolü
