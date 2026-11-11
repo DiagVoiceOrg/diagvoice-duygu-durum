@@ -15,9 +15,9 @@
   },
   "is_json": true,
   "meta": {
-    "base_url": "http://127.0.0.1:8085",
-    "captured_at": "2026-11-10T07:43:04.060442+00:00",
-    "git_commit": "bc01735da9eadc820a28a65d1c69ea828a28e463",
+    "base_url": "https://aiapi.diagvoice.com",
+    "captured_at": "2026-11-11T12:03:43.486927+00:00",
+    "git_commit": "e772db6035a3a25548f52de0d710bf0932e5dc72",
     "repeat": 2,
     "server_info": {
       "deps": {
@@ -72,15 +72,25 @@
     }
   },
   "response": {
-    "detail": "Internal Server Error"
+    "audio": {
+      "valence_audio": 1.0
+    },
+    "fusion": {
+      "mode": "dynamic",
+      "valence_fused": 0.9711388368761341,
+      "w_text": 0.9438845992088318
+    },
+    "text": {
+      "score": 0.9694229960441589,
+      "sentiment": "Positive",
+      "valence_text": 0.9694229960441589
+    }
   },
   "seconds": [
-    0.115,
-    0.047
+    1.393,
+    1.915
   ],
-  "status": 500,
+  "status": 200,
   "volatile_paths": [],
-  "warnings": [
-    "sunucu hatası 500"
-  ]
+  "warnings": []
 }

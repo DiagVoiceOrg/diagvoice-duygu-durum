@@ -47,8 +47,10 @@ RUN apt-get update \
         cmake \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Sürümler requirements.lock'tan (prod'da çalışan ortamın pip freeze çıktısı) kurulur; her build aynı paketleri alır.
+# Yeni paket: requirements.txt'e ekle → sunucuda kur/test et → scripts/freeze_requirements.sh ile lock'u yenile.
+COPY requirements.txt requirements.lock /app/
+RUN pip install --no-cache-dir -r /app/requirements.lock
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
