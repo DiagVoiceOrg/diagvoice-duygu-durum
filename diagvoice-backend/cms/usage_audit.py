@@ -317,6 +317,8 @@ async def insert_fusion_audit(
     client_ip: str,
     details: Optional[dict[str, Any]] = None,
     audio_recording: Optional[dict[str, Any]] = None,
+    api_key: Optional[dict[str, Any]] = None,
+    request_id: Optional[str] = None,
 ) -> None:
     if not AUDIT_LOG_ENABLED or _skip_path(path):
         return
@@ -335,6 +337,10 @@ async def insert_fusion_audit(
         }
         if audio_recording:
             doc["audio_recording"] = bson_safe(audio_recording)
+        if api_key:
+            doc.update(bson_safe(api_key))  # key_id, client_id, client_name
+        if request_id:
+            doc["request_id"] = request_id
         await get_db().fusion_api_logs.insert_one(doc)
     except Exception:
         _log.exception("fusion_api_logs insert failed path=%s", path)
@@ -349,6 +355,8 @@ def schedule_fusion_audit(
     client_ip: str,
     details: Optional[dict[str, Any]] = None,
     audio_recording: Optional[dict[str, Any]] = None,
+    api_key: Optional[dict[str, Any]] = None,
+    request_id: Optional[str] = None,
 ) -> None:
     """Yanıtı bloklamamak için arka planda yaz."""
     if not AUDIT_LOG_ENABLED or _skip_path(path):
@@ -364,6 +372,8 @@ def schedule_fusion_audit(
             client_ip=client_ip,
             details=details,
             audio_recording=audio_recording,
+            api_key=api_key,
+            request_id=request_id,
         )
     )
 

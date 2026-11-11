@@ -19,11 +19,15 @@ import fastapi
 import httpx
 import uvicorn
 from fastapi import File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from fusion_service.apikeys.auth import api_key_middleware, audit_fields
+from fusion_service.apikeys.errors import code_for_status as v1_code_for_status
+from fusion_service.apikeys.errors import error_response as v1_error_response
 from fusion_service.emotion_fusion import (
     DEFAULT_AUDIO_VALENCE_WEIGHTS,
     build_emotion_fusion_payload,
@@ -86,6 +90,9 @@ async def _app_lifespan(_app: fastapi.FastAPI):
         ),
         limits=httpx.Limits(max_keepalive_connections=32, max_connections=64),
     )
+    from fusion_service.apikeys.security import check_or_exit
+
+    check_or_exit(_CMS_ENABLED)
     try:
         if _CMS_ENABLED:
             import logging
@@ -94,8 +101,12 @@ async def _app_lifespan(_app: fastapi.FastAPI):
             try:
                 from cms.database import ensure_indexes
                 from cms.audio_recordings import ensure_storage_dir
+                from fusion_service.apikeys.store import MongoKeyStore, get_store
 
                 await ensure_indexes()
+                _ks = get_store()
+                if isinstance(_ks, MongoKeyStore):
+                    await _ks.ensure_indexes()
                 ensure_storage_dir()
                 _log.info("CMS Mongo indeksleri hazır.")
             except Exception:
@@ -160,6 +171,11 @@ async def _request_validation_exception_handler(request: Request, exc: RequestVa
 
     errs = exc.errors()
     set_request_error_audit(request, error_details_from_validation(errs))
+    if _route_path(request).startswith("/v1/"):
+        from cms.usage_audit import summarize_validation_errors
+
+        return v1_error_response(request, 422, "invalid_request", summarize_validation_errors(errs),
+                                 extra={"fields": jsonable_encoder(errs[:20])})
     if _route_path(request).startswith("/wellness/"):
         msg = errs[0].get("msg", "Geçersiz istek.") if errs else "Geçersiz istek."
         return JSONResponse(status_code=400, content={"error": str(msg)})
@@ -171,6 +187,11 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
     from cms.usage_audit import error_details_from_http_exception, set_request_error_audit
 
     set_request_error_audit(request, error_details_from_http_exception(exc.status_code, exc.detail))
+    if _route_path(request).startswith("/v1/"):
+        msg = exc.detail if isinstance(exc.detail, str) else "İstek işlenemedi."
+        extra = None if isinstance(exc.detail, str) else {"details": jsonable_encoder(exc.detail)}
+        return v1_error_response(request, exc.status_code, v1_code_for_status(exc.status_code), msg,
+                                 headers=getattr(exc, "headers", None), extra=extra)
     if isinstance(exc.detail, (dict, list)):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -201,8 +222,14 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         raise exc
     _log.exception("unhandled_exception path=%s", _route_path(request))
     set_request_error_audit(request, error_details_from_unhandled(exc))
+    if _route_path(request).startswith("/v1/"):
+        return v1_error_response(request, 500, "internal_error", "Sunucuda beklenmeyen bir hata oluştu.")
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+
+# API anahtarı kontrolü (F1). CORS'tan ÖNCE eklenir → CORS'un içinde çalışır; böylece 401/429 yanıtları da
+# CORS başlıklarını alır ve dıştaki audit middleware'i tarafından loglanır.
+app.middleware("http")(api_key_middleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -210,6 +237,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
 )
 
 
@@ -257,6 +285,8 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
         client_ip=client_ip_from_request(request.scope.get("headers") or []),
         details=details,
         audio_recording=audio_recording,
+        api_key=audit_fields(request),
+        request_id=getattr(request.state, "request_id", None),
     )
     return response
 
@@ -279,6 +309,10 @@ if _CMS_ENABLED:
     app.include_router(cms_admin_profiles.router, include_in_schema=False)
     app.include_router(cms_admin_diagnostics.router, include_in_schema=False)
     app.include_router(cms_admin_usage.router, include_in_schema=False)
+
+    from fusion_service.apikeys import admin as apikeys_admin
+
+    app.include_router(apikeys_admin.router, include_in_schema=False)
 
 VOICE_TO_TEXT_URL = _ipv4_loopback_url(
     os.environ.get("VOICE_TO_TEXT_URL", "http://127.0.0.1:8051/transcribe")
@@ -1567,6 +1601,27 @@ async def analyze_fused(
                 os.remove(tmp_path)
             except Exception:
                 pass
+
+
+# --- /v1: anahtarlı, sürümlü resmi API (F1). Handler'lar tanımlandıktan sonra bağlanır. ---
+from types import SimpleNamespace as _NS
+
+from fusion_service.v1 import build_router as _build_v1_router
+
+app.include_router(_build_v1_router(_NS(
+    togg_analyze=togg_analyze,
+    analyze_fused=analyze_fused,
+    proxy_analyze_voice_to_text=proxy_analyze_voice_to_text,
+    proxy_analyze_voice_sentiment=proxy_analyze_voice_sentiment,
+    proxy_analyze_disease=proxy_analyze_disease,
+    proxy_analyze_depression=proxy_analyze_depression,
+    proxy_analyze_age_gender=proxy_analyze_age_gender,
+    proxy_analyze_mental_fitness=proxy_analyze_mental_fitness,
+    proxy_analyze_emotion_v2=proxy_analyze_emotion_v2,
+    proxy_analyze_benchmark_v2=proxy_analyze_benchmark_v2,
+    proxy_analyze_text_sentiment=proxy_analyze_text_sentiment,
+    proxy_analyze_turkish_psych_signals=proxy_analyze_turkish_psych_signals,
+)))
 
 
 if __name__ == "__main__":

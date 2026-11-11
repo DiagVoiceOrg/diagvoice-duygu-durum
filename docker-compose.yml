@@ -30,6 +30,8 @@ services:
       - .env
     environment:
       HF_HUB_DISABLE_XET: "1"
+      # production: JWT_SECRET / CMS_ADMIN_PASSWORD / API_KEY_PEPPER zayıfsa uygulama başlamaz
+      DIAGVOICE_ENV: ${DIAGVOICE_ENV:-production}
       CMS_ENABLED: ${CMS_ENABLED:-1}
       MONGO_URI: ${MONGO_URI:?MONGO_URI tanımlı olmalı — kök .env içinde harici Mongo bağlantı dizesi}
       MONGO_DB: ${MONGO_DB:-diagvoice_cms}
