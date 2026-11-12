@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GPU sunucusunda canlıya alma — kendini korur:
+# Sunucuda (GPU veya yalnızca CPU) canlıya alma — kendini korur:
 #   1. kodu çek, image'ı build et (eski sistem bu sırada çalışmaya devam eder)
 #   2. eski sistemi durdur, yeni düzeni başlat (gateway + worker-gpu + worker-cpu + redis)
 #   3. tüm modeller hazır olana kadar bekle, 10 modelin her birine gerçek istek at (scripts/healthcheck.py)
@@ -10,14 +10,21 @@
 #   BRANCH=main scripts/deploy.sh
 #   NO_ROLLBACK=1 scripts/deploy.sh      # hata olursa geri dönme (tanı için)
 #   MODE=single scripts/deploy.sh        # doğrudan yedek düzeni kur
+#   DEVICE=cpu scripts/deploy.sh         # GPU yoksa otomatik; elle zorlamak için (docker-compose.cpu.yml katmanı)
 #
 # Kesinti: eski sistem durdurulduğu andan modeller yüklenene kadar (HF önbelleği doluysa birkaç dakika).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BRANCH="${BRANCH:-feat/prod-hardening}"
-READY_TIMEOUT="${READY_TIMEOUT:-1500}"
 MODE="${MODE:-multi}"
+# DEVICE=auto (varsayılan): nvidia-smi çalışıyorsa gpu, değilse cpu. Elle: DEVICE=gpu | DEVICE=cpu
+DEVICE="${DEVICE:-auto}"
+if [ "$DEVICE" = auto ]; then
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then DEVICE=gpu; else DEVICE=cpu; fi
+fi
+# CPU'da model yükleme yavaş + ilk açılışta HF indirmeleri → daha uzun bekleme
+if [ "$DEVICE" = cpu ]; then READY_TIMEOUT="${READY_TIMEOUT:-3600}"; HC_TIMEOUT=600; else READY_TIMEOUT="${READY_TIMEOUT:-1500}"; HC_TIMEOUT=300; fi
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DIAG="deploy-logs/$TS"
 mkdir -p "$DIAG" data/jobs data/audio_recordings
@@ -25,8 +32,13 @@ mkdir -p "$DIAG" data/jobs data/audio_recordings
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$DIAG/deploy.log"; }
 die() { log "HATA: $*"; exit 1; }
 
-SINGLE="docker compose -f docker-compose.single.yml"
-MULTI="docker compose -f docker-compose.yml"
+if [ "$DEVICE" = cpu ]; then
+  SINGLE="docker compose -f docker-compose.single.yml -f docker-compose.single.cpu.yml"
+  MULTI="docker compose -f docker-compose.yml -f docker-compose.cpu.yml"
+else
+  SINGLE="docker compose -f docker-compose.single.yml"
+  MULTI="docker compose -f docker-compose.yml"
+fi
 
 wait_healthy() {
   # $1 = etiket. Önce gateway cevap versin, sonra healthcheck.py 10/10 geçsin (her 30 sn'de bir dener).
@@ -39,7 +51,7 @@ wait_healthy() {
   done
   while true; do
     if curl -sf -o /dev/null http://127.0.0.1:8085/ready; then
-      if python3 scripts/healthcheck.py --timeout 300 > "$DIAG/healthcheck_$label.txt" 2>&1; then
+      if python3 scripts/healthcheck.py --timeout "$HC_TIMEOUT" > "$DIAG/healthcheck_$label.txt" 2>&1; then
         cat "$DIAG/healthcheck_$label.txt" | tee -a "$DIAG/deploy.log"
         return 0
       fi
@@ -64,6 +76,7 @@ collect_diag() {
 }
 
 # ---------------------------------------------------------------- 1. kod + build (eski sistem çalışırken)
+log "cihaz: $DEVICE · compose: ${MULTI#docker compose }"
 log "git: $BRANCH"
 git fetch -q origin || die "git fetch"
 git checkout -q "$BRANCH" || die "git checkout"
@@ -95,7 +108,13 @@ if bad:
     print("Eksik/zayıf: " + "; ".join(bad)); sys.exit(1)
 print("sırlar: tamam")
 PYEOF
-command -v nvidia-smi >/dev/null && nvidia-smi -L >> "$DIAG/deploy.log" 2>&1 || die "GPU görünmüyor (nvidia-smi)"
+if [ "$DEVICE" = gpu ]; then
+  nvidia-smi -L >> "$DIAG/deploy.log" 2>&1 || die "GPU görünmüyor (nvidia-smi)"
+else
+  log "cihaz: CPU (GPU yok) — modeller CPU'da çalışacak, açılış uzun sürebilir"
+  mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+  [ "${mem_gb:-0}" -ge 15 ] || die "RAM ${mem_gb} GB — 10 model için en az 16 GB gerekli (eski sistem çalışıyor, dokunulmadı)"
+fi
 
 # ---------------------------------------------------------------- 2. geçiş
 if [ "$MODE" = "single" ]; then

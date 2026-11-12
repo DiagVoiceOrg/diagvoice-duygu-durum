@@ -1,0 +1,30 @@
+# GPU'suz (yalnızca CPU) sunucu katmanı — docker-compose.yml'nin ÜSTÜNE uygulanır:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+#   (scripts/deploy.sh GPU yoksa bunu kendisi kullanır)
+#
+# - worker-gpu'daki NVIDIA ayrılması kaldırılır; tüm modeller CPU'da çalışır (servis adı değişmez).
+# - Image tek iş parçacığına sabitli (GPU için doğru); CPU'da Whisper vb. için çok yavaş olur.
+#   TORCH_THREADS (.env, varsayılan 4) worker-gpu'nun kullanacağı çekirdek sayısıdır.
+# - İlk açılışta Hugging Face modelleri iner + CPU'da yükleme daha uzun → healthcheck bekleme süresi 60 dk.
+# Docker Compose ≥ 2.24 gerekir (!reset).
+
+services:
+  worker-gpu:
+    deploy: !reset {}
+    environment:
+      OMP_NUM_THREADS: ${TORCH_THREADS:-4}
+      MKL_NUM_THREADS: ${TORCH_THREADS:-4}
+      OPENBLAS_NUM_THREADS: ${TORCH_THREADS:-4}
+      NUMEXPR_MAX_THREADS: ${TORCH_THREADS:-4}
+    healthcheck:
+      start_period: 3600s
+
+  worker-cpu:
+    environment:
+      OMP_NUM_THREADS: ${CPU_WORKER_THREADS:-2}
+      MKL_NUM_THREADS: ${CPU_WORKER_THREADS:-2}
+      OPENBLAS_NUM_THREADS: ${CPU_WORKER_THREADS:-2}
+      NUMEXPR_MAX_THREADS: ${CPU_WORKER_THREADS:-2}
+    healthcheck:
+      start_period: 3600s

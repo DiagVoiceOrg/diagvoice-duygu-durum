@@ -1,0 +1,15 @@
+# GPU'suz sunucuda YEDEK düzen katmanı — docker-compose.single.yml'nin ÜSTÜNE uygulanır:
+#
+#   docker compose -f docker-compose.single.yml -f docker-compose.single.cpu.yml up -d
+#
+# Tek konteynerde 10 model süreci aynı anda çalıştığı için süreç başı iş parçacığı düşük tutulur
+# (SINGLE_TORCH_THREADS, varsayılan 2). Docker Compose ≥ 2.24 gerekir (!reset).
+
+services:
+  backend:
+    deploy: !reset {}
+    environment:
+      OMP_NUM_THREADS: ${SINGLE_TORCH_THREADS:-2}
+      MKL_NUM_THREADS: ${SINGLE_TORCH_THREADS:-2}
+      OPENBLAS_NUM_THREADS: ${SINGLE_TORCH_THREADS:-2}
+      NUMEXPR_MAX_THREADS: ${SINGLE_TORCH_THREADS:-2}

@@ -9,7 +9,8 @@
 # - Üç servis aynı image'ı farklı komutla çalıştırır. Kod ./diagvoice-backend → /app (bind mount).
 # - Ortam: kök .env. Değişince: docker compose up -d --force-recreate
 # - Dağıtım: scripts/deploy.sh   ·   Geri dönüş (tek konteyner): docker compose -f docker-compose.single.yml up -d
-# - GPU: NVIDIA sürücüsü + nvidia-container-toolkit. GPU'suz makinede worker-gpu'daki `deploy:` bloğunu kaldırın.
+# - GPU: NVIDIA sürücüsü + nvidia-container-toolkit. GPU'suz sunucu: -f docker-compose.yml -f docker-compose.cpu.yml
+#   (scripts/deploy.sh GPU yoksa bunu kendisi seçer).
 
 x-backend: &backend
   build:
