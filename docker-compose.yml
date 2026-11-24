@@ -1,6 +1,6 @@
 # DiagVoice backend — GPU sunucusu (PROD_PLAN F3). FE ayrı: Coolify (CPU sunucusu) app/ klasörünü build eder.
 #
-#   İnternet ─443─▶ host nginx (TLS) ─▶ 127.0.0.1:8085 ─▶ gateway ─┬─▶ worker-gpu:8060 (8 model, tek CUDA süreci)
+#   İnternet ─443─▶ nginx-proxy-manager ─▶ 172.17.0.1:8085 ─▶ gateway ─┬─▶ worker-gpu:8060 (8 model, tek CUDA süreci)
 #                                                                  ├─▶ worker-cpu:8061 (sklearn modelleri)
 #                                                                  └─▶ redis:6379     (iş kuyruğu, limitler)
 #
@@ -85,7 +85,8 @@ services:
     <<: *backend
     command: ["python", "/app/fusion_service/app.py"]
     ports:
-      - "127.0.0.1:8085:8085"   # sadece makine içi; dış dünya host nginx üzerinden gelir
+      - "127.0.0.1:8085:8085"   # makine içi
+      - "172.17.0.1:8085:8085"  # nginx-proxy-manager konteyneri docker0 üzerinden gelir; genel IP'ye açılmaz
     depends_on:
       redis: { condition: service_healthy }
       worker-gpu: { condition: service_healthy }
