@@ -306,6 +306,7 @@ async def fusion_usage_audit_middleware(request: Request, call_next):
 
 
 from fusion_service.wellness.router import router as wellness_router
+from fusion_service.wellness.router import wellness_companion_chat as _wellness_companion_chat
 
 app.include_router(wellness_router, include_in_schema=False)
 
@@ -1673,6 +1674,7 @@ _V1_HANDLERS = _NS(
     proxy_analyze_text_sentiment=proxy_analyze_text_sentiment,
     proxy_analyze_turkish_psych_signals=proxy_analyze_turkish_psych_signals,
     upstream_client=_upstream_client,
+    wellness_companion_chat=_wellness_companion_chat,
 )
 app.include_router(_build_v1_router(_V1_HANDLERS))
 

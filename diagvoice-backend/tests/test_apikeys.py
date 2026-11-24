@@ -317,3 +317,78 @@ def test_weak_secrets_block_production(monkeypatch):
     monkeypatch.setenv("DIAGVOICE_ENV", "")
     monkeypatch.setenv("API_KEY_PEPPER", "")
     security.check_or_exit(cms_enabled=False)  # geliştirmede yalnızca uyarı
+
+
+# ----------------------------------------------------------------------------- wellness sohbet
+@pytest.fixture()
+def fake_wellness(monkeypatch):
+    import fusion_service.wellness.router as WR
+    from fusion_service.wellness.service import WellnessChatError
+
+    calls = []
+    state = {"error": None}
+
+    async def fake_chat(*, messages, client_ip, locale=None, session_id=None):
+        calls.append(client_ip)
+        if state["error"]:
+            raise WellnessChatError(state["error"], status_code=503)
+        return "Merhaba, nasıl yardımcı olabilirim?", {}
+
+    monkeypatch.setattr(WR, "handle_wellness_chat", fake_chat)
+    return calls, state
+
+
+CHAT = {"messages": [{"role": "user", "content": "Bugün yorgunum."}], "locale": "tr"}
+
+
+def test_v1_wellness_chat(fake_wellness):
+    calls, state = fake_wellness
+
+    async def t():
+        async with client() as c:
+            assert (await c.post("/v1/wellness/chat", json=CHAT)).status_code == 401
+            togg_only, _, _ = await make_key(c, scopes=["analyze:togg"])
+            r = await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": togg_only})
+            assert r.status_code == 403 and r.json()["error"]["code"] == "scope_denied"
+            raw, key_id, _ = await make_key(c, scopes=["analyze:togg", "wellness:chat"])
+            r = await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": raw})
+            assert r.status_code == 200, r.text
+            assert r.json()["message"].startswith("Merhaba")
+            assert calls[-1] == f"apikey:{key_id}"  # IP sınırı yerine anahtar limitleri
+            state["error"] = "Yapay zeka servisi şu an kullanılamıyor."
+            r = await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": raw})
+            assert r.status_code == 503
+            assert r.json()["error"]["code"] == "service_unavailable" and r.json()["error"]["request_id"]
+            r = await c.get("/v1/models", headers={"X-API-Key": raw})
+            assert {m["id"] for m in r.json()["models"]} == {"togg", "wellness_chat"}
+    run(t())
+
+
+def test_legacy_wellness_chat_optional_key(fake_wellness):
+    calls, _ = fake_wellness
+
+    async def t():
+        async with client() as c:
+            r = await c.post("/wellness/companion/chat", json=CHAT)  # landing widget: anahtarsız
+            assert r.status_code == 200 and not calls[-1].startswith("apikey:")
+            r = await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": "dv_sk_abcdefgh_" + "A" * 32})
+            assert r.status_code == 401
+            togg_only, _, _ = await make_key(c, scopes=["analyze:togg"])
+            assert (await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": togg_only})).status_code == 403
+            raw, key_id, _ = await make_key(c, scopes=["wellness:chat"])
+            r = await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": raw})
+            assert r.status_code == 200 and calls[-1] == f"apikey:{key_id}"
+            assert r.json() == {"message": "Merhaba, nasıl yardımcı olabilirim?", "transcript": None}
+    run(t())
+
+
+def test_wellness_ip_limit_skipped_for_keys(monkeypatch):
+    from fusion_service.wellness import rate_limit, service
+
+    monkeypatch.setattr(rate_limit, "WELLNESS_RATE_LIMIT_PER_MIN", 1)
+    rate_limit._hits.clear()
+    service._ensure_wellness_ready("1.2.3.4")
+    with pytest.raises(service.WellnessChatError):
+        service._ensure_wellness_ready("1.2.3.4")
+    for _ in range(5):
+        service._ensure_wellness_ready("apikey:abcdefgh")  # anahtarlı istek IP sınırına takılmaz

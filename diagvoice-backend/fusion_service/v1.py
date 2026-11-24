@@ -92,6 +92,68 @@ def build_router(h: SimpleNamespace) -> APIRouter:
     async def v1_turkish_psych(request: Request, body: TurkishPsychSignalsRequest):
         return await h.proxy_analyze_turkish_psych_signals(request, body)
 
+    # ------------------------------------------------------------------ Wellness sohbet (LLM)
+    _WELLNESS_BODY = {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["messages"],
+                        "properties": {
+                            "messages": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["role", "content"],
+                                    "properties": {
+                                        "role": {"type": "string", "enum": ["user", "assistant"]},
+                                        "content": {"type": "string"},
+                                    },
+                                },
+                                "description": "Sohbet geçmişi; en az bir user mesajı. En fazla 40 mesaj, mesaj başı 4000 karakter.",
+                            },
+                            "locale": {"type": "string", "enum": ["tr", "en"], "default": "tr"},
+                            "session_id": {"type": "string", "description": "İsteğe bağlı anonim oturum kimliği"},
+                        },
+                    },
+                    "example": {"messages": [{"role": "user", "content": "Bugün biraz yorgunum."}], "locale": "tr"},
+                },
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file", "messages"],
+                        "properties": {
+                            "file": {"type": "string", "format": "binary", "description": "Kullanıcının sesli mesajı"},
+                            "messages": {"type": "string", "description": "Önceki mesajlar, JSON dizi metni ([] olabilir)"},
+                            "locale": {"type": "string", "enum": ["tr", "en"]},
+                            "session_id": {"type": "string"},
+                        },
+                    }
+                },
+            },
+        }
+    }
+    _WELLNESS_CODES = {400: "invalid_request", 413: "payload_too_large", 429: "rate_limited",
+                       502: "upstream_error", 503: "service_unavailable"}
+
+    @r.post("/wellness/chat", summary="Wellness Companion sohbet (metin veya ses)", openapi_extra=_WELLNESS_BODY)
+    async def v1_wellness_chat(request: Request):
+        """Yanıt: `{ "message": "...", "transcript": "..." | null }` — transcript yalnızca ses modunda dolu."""
+        import json
+
+        from fusion_service.apikeys.errors import error_response
+
+        resp = await h.wellness_companion_chat(request)
+        if isinstance(resp, JSONResponse) and resp.status_code >= 400:
+            try:
+                msg = json.loads(resp.body).get("error") or "İstek işlenemedi."
+            except Exception:
+                msg = "İstek işlenemedi."
+            return error_response(request, resp.status_code, _WELLNESS_CODES.get(resp.status_code, "error"), str(msg))
+        return resp
+
     # registry.yaml'dan otomatik açılan modeller (yeni model eklemek için kod yazmak gerekmez).
     # Sabit uçlardan SONRA tanımlanır; böylece yukarıdaki yollar önceliklidir.
     @r.post("/analyze/{model_id}", summary="Registry'deki diğer modeller (registry.yaml → v1)")

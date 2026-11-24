@@ -21,6 +21,7 @@ MODELS: dict[str, dict[str, str]] = {
     "model:text_sentiment": {"title": "Metin duygu analizi", "path": "/v1/analyze/text_sentiment"},
     "model:turkish_psych": {"title": "Türkçe psikolojik sinyaller", "path": "/v1/analyze/turkish_psych"},
     "model:text_audio_fusion": {"title": "Metin + ses füzyonu", "path": None},
+    "wellness:chat": {"title": "Wellness Companion sohbet (LLM; metin veya ses)", "path": "/v1/wellness/chat"},
 }
 
 ALL = "*"
@@ -72,6 +73,8 @@ LEGACY_PATHS: dict[str, str] = {
     "/analyze-benchmark-v2": "model:occupational_health",
     "/analyze-turkish-psych-signals": "model:turkish_psych",
     "/analyze-depression": "model:depression",
+    # Landing widget anahtarsız kullanır (optional modda açık). Anahtar gönderilirse doğrulanır, sayılır, limitlenir.
+    "/wellness/companion/chat": "wellness:chat",
 }
 
 # /v1 yolları → scope (GET /v1/models ve /v1/me yalnızca geçerli anahtar ister, scope istemez)
@@ -95,7 +98,9 @@ def visible_models(key_scopes: list[str]) -> list[dict]:
     out = []
     for s, m in MODELS.items():
         if m["path"] and allowed(key_scopes, s):
-            out.append({"id": s.split(":", 1)[1], "scope": s, "title": m["title"], "path": m["path"]})
+            prefix, name = s.split(":", 1)
+            mid = name if prefix in ("analyze", "model") else s.replace(":", "_")  # wellness:chat → wellness_chat
+            out.append({"id": mid, "scope": s, "title": m["title"], "path": m["path"]})
     return out
 
 

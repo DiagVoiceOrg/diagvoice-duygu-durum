@@ -43,6 +43,10 @@ def _voice_upload_from_form(form) -> UploadFile | None:
 
 
 def _client_ip(request: Request) -> str:
+    """Hız sınırı kimliği: API anahtarı varsa anahtar (limitleri middleware uygular), yoksa istemci IP'si."""
+    key = getattr(request.state, "api_key", None)
+    if key is not None:
+        return f"apikey:{key.key_id}"
     from cms.usage_audit import client_ip_from_request
 
     return client_ip_from_request(request.scope.get("headers") or [])

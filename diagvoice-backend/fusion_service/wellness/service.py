@@ -500,7 +500,9 @@ def _ensure_wellness_ready(client_ip: str) -> None:
             "Wellness Companion geçici olarak kapalı.",
             status_code=503,
         )
-    if not check_rate_limit(client_ip):
+    # API anahtarıyla gelen isteklerde IP sınırı yerine anahtarın kendi limitleri (middleware) geçerli.
+    # Aksi halde tek IP'den gelen bir müşteri backend'i (ör. TOGG) dakikada 20 mesajda tıkanırdı.
+    if not str(client_ip).startswith("apikey:") and not check_rate_limit(client_ip):
         raise WellnessChatError(
             "Çok fazla mesaj gönderdiniz. Lütfen kısa bir süre bekleyin.",
             status_code=429,
