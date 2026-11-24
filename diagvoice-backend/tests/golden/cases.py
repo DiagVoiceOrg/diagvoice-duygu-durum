@@ -6,7 +6,7 @@ Her vaka tek bir HTTP isteğidir. `capture.py` bunları çalışan sisteme atıp
 kayıtla karşılaştırır.
 
 Kapsam dışı (bilinçli):
-- /analyze-mental-fitness/validate-transcript-meaning: DeepSeek LLM, deterministik değil.
+- /analyze-mental-fitness/validate-transcript-meaning: OpenAI LLM, deterministik değil.
 - /wellness/*: OpenAI LLM, deterministik değil.
 - /analyze-emotion-fusion: girdisi diğer servislerin çıktısı; /analyze-fused içinde zaten ölçülüyor.
 """

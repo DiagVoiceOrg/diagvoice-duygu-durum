@@ -1,4 +1,14 @@
-"""DeepSeek (OpenAI-compatible) ile transkript anlamlılık kontrolü."""
+"""Transkript anlamlılık kontrolü: önce yerel tekrar filtresi, sonra OpenAI (sohbetle aynı sağlayıcı).
+
+Ortam değişkenleri (hepsi isteğe bağlı; boşsa sohbetin OPENAI_* ayarları kullanılır):
+  TRANSCRIPT_VALIDATION_LLM=1           LLM kontrolünü aç (eski ad: DEEPSEEK_TRANSCRIPT_VALIDATION)
+  REQUIRE_TRANSCRIPT_VALIDATION=1       LLM'e ulaşılamazsa isteği 502 ile reddet
+                                        (eski ad: REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION; varsayılan 0 = yerel filtreyle devam)
+  TRANSCRIPT_VALIDATION_API_KEY         yoksa OPENAI_API_KEY
+  TRANSCRIPT_VALIDATION_API_BASE        yoksa OPENAI_API_BASE, o da yoksa https://api.openai.com/v1
+  TRANSCRIPT_VALIDATION_MODEL           yoksa OPENAI_MODEL, o da yoksa gpt-4o-mini
+DEEPSEEK_API_KEY / DEEPSEEK_API_BASE / DEEPSEEK_MODEL artık okunmaz.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +19,50 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
+DEFAULT_API_BASE = "https://api.openai.com/v1"
+DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def _env_flag(*names: str) -> bool:
+    for n in names:
+        v = os.environ.get(n, "").strip().lower()
+        if v:
+            return v in ("1", "true", "yes")
+    return False
+
+
+def _env_first(*names: str) -> str:
+    for n in names:
+        v = os.environ.get(n, "").strip()
+        if v:
+            return v
+    return ""
+
+
+def llm_enabled() -> bool:
+    return _env_flag("TRANSCRIPT_VALIDATION_LLM", "DEEPSEEK_TRANSCRIPT_VALIDATION")
+
+
+def llm_required() -> bool:
+    return _env_flag("REQUIRE_TRANSCRIPT_VALIDATION", "REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION")
+
+
+def llm_api_key() -> str:
+    return _env_first("TRANSCRIPT_VALIDATION_API_KEY", "OPENAI_API_KEY")
+
+
+def llm_api_base() -> str:
+    return (_env_first("TRANSCRIPT_VALIDATION_API_BASE", "OPENAI_API_BASE") or DEFAULT_API_BASE).rstrip("/")
+
+
+def llm_model() -> str:
+    return _env_first("TRANSCRIPT_VALIDATION_MODEL", "OPENAI_MODEL") or DEFAULT_MODEL
+
 
 def transcript_is_low_information_repetition(text: str) -> tuple[bool, str]:
     """
     STT çıktısı çoğu zaman anlamsız tekrarlardan oluşuyorsa (ör. onlarca kez 'çay yok'),
-    DeepSeek'e gitmeden False dönmek için kaba kontrol.
+    LLM'e gitmeden False dönmek için kaba kontrol.
 
     Returns:
         (reject, reason_code) — reject True ise transkript mental fitness için uygun değil.
@@ -80,10 +129,12 @@ def validate_transcript_meaningfulness(
     timeout_s: float = 45.0,
 ) -> tuple[bool, str]:
     """
-    Önce tekrar / düşük çeşitlilik filtresi; ardından (API anahtarı varsa) DeepSeek ile doğrular.
+    Önce tekrar / düşük çeşitlilik filtresi; ardından (LLM açık ve anahtar varsa) OpenAI ile doğrular.
 
     Returns:
         (meaningful, reason) — reason kısa kod veya İngilizce gerekçe / skip nedeni.
+    Raises:
+        RuntimeError — LLM'e ulaşılamadı veya yanıt çözümlenemedi.
     """
     trimmed = (text or "").strip()
     if len(trimmed) > 8000:
@@ -93,17 +144,16 @@ def validate_transcript_meaningfulness(
     if reject:
         return False, rep_reason
 
-    # Harici LLM varsayılan KAPALI; yalnızca DEEPSEEK_TRANSCRIPT_VALIDATION=1 iken DeepSeek çağrılır.
-    llm_on = os.environ.get("DEEPSEEK_TRANSCRIPT_VALIDATION", "").strip().lower() in ("1", "true", "yes")
-    if not llm_on:
-        return True, "deepseek_llm_disabled_heuristic_only"
+    # Harici LLM varsayılan KAPALI; yalnızca TRANSCRIPT_VALIDATION_LLM=1 iken çağrılır.
+    if not llm_enabled():
+        return True, "llm_disabled_heuristic_only"
 
-    key = (api_key or "").strip()
+    key = (api_key if api_key is not None else llm_api_key()).strip()
     if not key:
-        return True, "deepseek_api_key_yok_doğrulama_atlandı"
+        return True, "llm_api_key_missing_heuristic_only"
 
-    url = (base_url or os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")).rstrip("/") + "/chat/completions"
-    mdl = model or os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+    url = (base_url or llm_api_base()).rstrip("/") + "/chat/completions"
+    mdl = model or llm_model()
     lang_name = _language_prompt_name(language_ui)
 
     system = (
@@ -125,6 +175,7 @@ def validate_transcript_meaningfulness(
         "model": mdl,
         "temperature": 0,
         "max_tokens": 200,
+        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
@@ -146,14 +197,14 @@ def validate_transcript_meaningfulness(
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"DeepSeek HTTP {e.code}: {err_body}") from e
+        raise RuntimeError(f"Transcript LLM HTTP {e.code}: {err_body}") from e
     except Exception as e:
-        raise RuntimeError(f"DeepSeek isteği başarısız: {e}") from e
+        raise RuntimeError(f"Transcript LLM isteği başarısız: {e}") from e
 
     try:
         content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
-        raise RuntimeError(f"DeepSeek yanıt şekli beklenenden farklı: {body!r}") from e
+        raise RuntimeError(f"Transcript LLM yanıt şekli beklenenden farklı: {body!r}") from e
 
     try:
         obj = _extract_json_object(content)
@@ -161,4 +212,4 @@ def validate_transcript_meaningfulness(
         reason = str(obj.get("reason", "") or "").strip() or ("coherent" if meaningful else "not_meaningful")
         return meaningful, reason[:500]
     except (json.JSONDecodeError, ValueError, TypeError) as e:
-        raise RuntimeError(f"DeepSeek JSON çözümlenemedi: {content[:400]} ({e})") from e
+        raise RuntimeError(f"Transcript LLM JSON çözümlenemedi: {content[:400]} ({e})") from e

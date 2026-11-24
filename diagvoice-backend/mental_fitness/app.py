@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sklearn.base import BaseEstimator
 from starlette.concurrency import run_in_threadpool
 
-from deepseek_transcript import validate_transcript_meaningfulness
+import transcript_validation as TV
 from mental_fitness_classifier_v1 import extract_features
 
 app = fastapi.FastAPI()
@@ -39,13 +39,6 @@ app.add_middleware(
 MODEL_PATH = os.environ.get(
     "MENTAL_FITNESS_MODEL_PATH",
     "/app/models/extratreesclassifier.joblib",
-)
-
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-_REQUIRE_DEEPSEEK = os.environ.get("REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
 )
 
 
@@ -157,8 +150,8 @@ async def root():
         "message": "Mental fitness (canlıda olan) servisi. Ses dosyanızı /analyze-mental endpoint'ine gönderin.",
         "model_path": MODEL_PATH,
         "transcript_validation": (
-            "POST /validate-transcript-meaning — önce yerel tekrar filtresi; DeepSeek için "
-            "DEEPSEEK_TRANSCRIPT_VALIDATION=1 ve DEEPSEEK_API_KEY gerekir (varsayılan: LLM kapalı)."
+            "POST /validate-transcript-meaning — önce yerel tekrar filtresi; LLM (OpenAI) kontrolü için "
+            "TRANSCRIPT_VALIDATION_LLM=1 ve OPENAI_API_KEY gerekir (varsayılan: LLM kapalı)."
         ),
     }
 
@@ -167,7 +160,8 @@ async def root():
 async def validate_transcript_meaning(body: TranscriptMeaningRequest):
     """
     Seçilen dile göre transkript anlamlı konuşma mı — mental fitness öncesi koruma.
-    DEEPSEEK_API_KEY yoksa (ve REQUIRE_DEEPSEEK_TRANSCRIPT_VALIDATION kapalıysa) meaningful=true döner (geliştirme uyumu).
+    LLM kapalıysa veya anahtar yoksa yalnızca yerel filtre uygulanır.
+    LLM hata verirse: REQUIRE_TRANSCRIPT_VALIDATION=1 ise 502, değilse yerel filtreyle devam (meaningful=true).
     """
     raw = (body.text or "").strip()
     if not raw:
@@ -177,28 +171,25 @@ async def validate_transcript_meaning(body: TranscriptMeaningRequest):
             "validation_skipped": False,
         }
 
-    _llm_on = os.environ.get("DEEPSEEK_TRANSCRIPT_VALIDATION", "").strip().lower() in ("1", "true", "yes")
-    if _REQUIRE_DEEPSEEK and _llm_on and not DEEPSEEK_API_KEY:
+    llm_on = TV.llm_enabled()
+    api_key = TV.llm_api_key()
+    if TV.llm_required() and llm_on and not api_key:
         raise HTTPException(
             status_code=503,
-            detail="Transcript validation required (LLM on) but DEEPSEEK_API_KEY is not set.",
+            detail="Transcript validation required (LLM on) but OPENAI_API_KEY is not set.",
         )
 
     try:
-        meaningful, reason = validate_transcript_meaningfulness(
-            raw,
-            body.language,
-            api_key=DEEPSEEK_API_KEY or None,
-        )
+        meaningful, reason = TV.validate_transcript_meaningfulness(raw, body.language, api_key=api_key)
     except RuntimeError as e:
-        # DeepSeek ulaşılamaz/bakiye bitti vb. Yerel tekrar filtresi zaten geçti (validate içinde önce o çalışır).
+        # LLM ulaşılamaz / bakiye bitti vb. Yerel tekrar filtresi zaten geçti (validate içinde önce o çalışır).
         # Zorunlu değilse akışı durdurma: sesli sohbet ve mental fitness yalnızca bu ek kontrol yüzünden düşmesin.
-        if _REQUIRE_DEEPSEEK:
+        if TV.llm_required():
             raise HTTPException(status_code=502, detail=str(e)) from e
         _log.warning("transcript_validation_llm_unavailable fallback=heuristic err=%s", str(e)[:300])
         return {"meaningful": True, "reason": "llm_unavailable_heuristic_only", "validation_skipped": True}
 
-    validation_skipped = not (_llm_on and bool(DEEPSEEK_API_KEY))
+    validation_skipped = not (llm_on and bool(api_key))
     return {"meaningful": meaningful, "reason": reason, "validation_skipped": validation_skipped}
 
 
