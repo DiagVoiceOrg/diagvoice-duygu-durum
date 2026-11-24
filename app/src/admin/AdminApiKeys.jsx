@@ -52,8 +52,213 @@ function limitText(v) {
 }
 
 function scopeLabel(scope, scopes) {
-  if (scope === '*') return 'Tüm analizler';
+  if (scope === '*') return 'Tüm uçlar (analiz + sohbet)';
   return scopes.find((s) => s.scope === scope)?.title || scope;
+}
+
+function parseOrigins(text) {
+  return text
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** rpm / max_concurrent / monthly_quota alanlarını doğrular; hata varsa string döner. */
+function parseLimits(form) {
+  const limits = {};
+  for (const k of ['rpm', 'max_concurrent', 'monthly_quota']) {
+    const raw = String(form[k]).trim();
+    if (raw === '') continue;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0) return 'Limitler 0 veya pozitif tam sayı olmalı.';
+    limits[k] = n;
+  }
+  return limits;
+}
+
+/* ---------- Kapsam seçici (oluşturma + düzenleme) ---------- */
+
+function ScopePicker({ scopes, selected, onToggle }) {
+  return (
+    <fieldset style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '0.65rem 0.85rem' }}>
+      <legend style={{ fontSize: '0.875rem', fontWeight: 600, padding: '0 0.25rem' }}>Kapsamlar</legend>
+      {scopes.length ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(15rem, 1fr))', gap: '0.4rem 1rem' }}>
+          {scopes.map((s) => (
+            <label key={s.scope} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.45rem', fontWeight: 400 }}>
+              <input
+                type="checkbox"
+                checked={selected.includes(s.scope)}
+                onChange={() => onToggle(s.scope)}
+                style={{ marginTop: '0.2rem' }}
+              />
+              <span>
+                <span style={{ fontWeight: s.scope === '*' ? 700 : 600 }}>{scopeLabel(s.scope, scopes)}</span>
+                <br />
+                <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.path || s.scope}</code>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <span style={mutedText}>Kapsam listesi yüklenemedi.</span>
+      )}
+    </fieldset>
+  );
+}
+
+/* ---------- Anahtar düzenleme (anahtarın kendisi değişmez) ---------- */
+
+function KeyEditModal({ apiKey, scopes, token, logout, onSaved, onClose }) {
+  const isPk = apiKey.type === 'pk';
+  const [form, setForm] = useState(() => ({
+    name: apiKey.name || '',
+    scopes: [...(apiKey.scopes || [])],
+    origins: (apiKey.allowed_origins || []).join('\n'),
+    rpm: String(apiKey.limits?.rpm ?? 0),
+    max_concurrent: String(apiKey.limits?.max_concurrent ?? 0),
+    monthly_quota: String(apiKey.limits?.monthly_quota ?? 0),
+    expires: apiKey.expires_at ? String(apiKey.expires_at).slice(0, 10) : '',
+  }));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  function patch(p) {
+    setForm((f) => ({ ...f, ...p }));
+  }
+
+  function toggleScope(scope) {
+    setForm((f) => ({
+      ...f,
+      scopes: f.scopes.includes(scope) ? f.scopes.filter((s) => s !== scope) : [...f.scopes, scope],
+    }));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr('');
+    const name = form.name.trim();
+    const origins = parseOrigins(form.origins);
+    if (name.length < 2 || name.length > 120) return setErr('Anahtar adı 2–120 karakter olmalı.');
+    if (!form.scopes.length) return setErr('En az bir kapsam seçin.');
+    if (isPk && !origins.length) return setErr('Tarayıcı anahtarı için en az bir izinli origin girin.');
+    const limits = parseLimits(form);
+    if (typeof limits === 'string') return setErr(limits);
+
+    const body = {
+      name,
+      scopes: form.scopes,
+      allowed_origins: isPk ? origins : [],
+      limits,
+      expires_at: form.expires ? `${form.expires}T23:59:59Z` : null,
+    };
+    setSaving(true);
+    try {
+      const updated = await cmsApi.updateApiKey(token, apiKey.key_id, body);
+      onSaved(updated);
+    } catch (e2) {
+      if (e2.response?.status === 401) logout();
+      setErr(errMsg(e2, 'Anahtar güncellenemedi'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="usage-log-overlay" role="dialog" aria-modal aria-labelledby="edit-key-title" onClick={onClose}>
+      <div className="usage-log-modal" style={{ width: 'min(48rem, 100%)' }} onClick={(e) => e.stopPropagation()}>
+        <header className="usage-log-modal-head">
+          <div>
+            <h2 id="edit-key-title">Anahtarı düzenle</h2>
+            <p className="usage-log-modal-sub">
+              <code>{apiKey.masked}</code>
+              {apiKey.client_name ? <span>· {apiKey.client_name}</span> : null}
+              <span>· {TYPE_LABELS[apiKey.type] || apiKey.type}</span>
+            </p>
+          </div>
+          <button type="button" className="tab-button secondary" onClick={onClose} disabled={saving}>
+            Kapat
+          </button>
+        </header>
+        <form className="usage-log-modal-body admin-form admin-form-wide" style={{ paddingTop: '1rem' }} onSubmit={submit}>
+          <span style={mutedText}>
+            Anahtarın kendisi değişmez; müşteri aynı anahtarı kullanmaya devam eder. Değişiklikler hemen, diğer
+            sunucularda en geç 1 dakika içinde geçerli olur.
+          </span>
+          {err ? <div className="error" style={{ marginTop: 0 }}>{err}</div> : null}
+
+          <label>
+            Anahtar adı
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              minLength={2}
+              maxLength={120}
+              required
+            />
+          </label>
+
+          <ScopePicker scopes={scopes} selected={form.scopes} onToggle={toggleScope} />
+
+          {isPk ? (
+            <label>
+              İzinli origin’ler (her satıra bir tane)
+              <textarea
+                value={form.origins}
+                onChange={(e) => patch({ origins: e.target.value })}
+                style={{ minHeight: '5rem' }}
+                required
+              />
+            </label>
+          ) : null}
+
+          <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
+            <label style={{ flex: '1 1 9rem' }}>
+              Dakikada istek (rpm)
+              <input type="number" min={0} step={1} value={form.rpm} onChange={(e) => patch({ rpm: e.target.value })} style={fieldStyle} />
+            </label>
+            <label style={{ flex: '1 1 9rem' }}>
+              Eşzamanlı istek
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={form.max_concurrent}
+                onChange={(e) => patch({ max_concurrent: e.target.value })}
+                style={fieldStyle}
+              />
+            </label>
+            <label style={{ flex: '1 1 9rem' }}>
+              Aylık kota
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={form.monthly_quota}
+                onChange={(e) => patch({ monthly_quota: e.target.value })}
+                style={fieldStyle}
+              />
+            </label>
+            <label style={{ flex: '1 1 9rem' }}>
+              Son kullanma
+              <input type="date" value={form.expires} onChange={(e) => patch({ expires: e.target.value })} style={fieldStyle} />
+            </label>
+          </div>
+          <span style={{ ...mutedText, marginTop: '-0.5rem' }}>0 = sınırsız. Tarihi silerseniz anahtar süresiz olur.</span>
+
+          <div className="admin-actions">
+            <button type="submit" className="tab-button active" disabled={saving}>
+              {saving ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+            <button type="button" className="tab-button secondary" disabled={saving} onClick={onClose}>
+              Vazgeç
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 /* ---------- Tek seferlik anahtar gösterimi ---------- */
@@ -253,23 +458,14 @@ function KeyCreateForm({ token, logout, clients, scopes, defaultClientId, onCrea
     e.preventDefault();
     setErr('');
     const name = form.name.trim();
-    const origins = form.origins
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const origins = parseOrigins(form.origins);
     if (!clientId) return setErr('Önce bir müşteri seçin.');
     if (name.length < 2 || name.length > 120) return setErr('Anahtar adı 2–120 karakter olmalı.');
     if (!form.scopes.length) return setErr('En az bir kapsam seçin.');
     if (isPk && !origins.length) return setErr('Tarayıcı anahtarı için en az bir izinli origin girin.');
 
-    const limits = {};
-    for (const k of ['rpm', 'max_concurrent', 'monthly_quota']) {
-      const raw = String(form[k]).trim();
-      if (raw === '') continue;
-      const n = Number(raw);
-      if (!Number.isInteger(n) || n < 0) return setErr('Limitler 0 veya pozitif tam sayı olmalı.');
-      limits[k] = n;
-    }
+    const limits = parseLimits(form);
+    if (typeof limits === 'string') return setErr(limits);
 
     const body = {
       type: form.type,
@@ -347,33 +543,7 @@ function KeyCreateForm({ token, logout, clients, scopes, defaultClientId, onCrea
         />
       </label>
 
-      <fieldset style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '0.65rem 0.85rem' }}>
-        <legend style={{ fontSize: '0.875rem', fontWeight: 600, padding: '0 0.25rem' }}>Kapsamlar</legend>
-        {scopes.length ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(15rem, 1fr))', gap: '0.4rem 1rem' }}>
-            {scopes.map((s) => (
-              <label
-                key={s.scope}
-                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.45rem', fontWeight: 400 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.scopes.includes(s.scope)}
-                  onChange={() => toggleScope(s.scope)}
-                  style={{ marginTop: '0.2rem' }}
-                />
-                <span>
-                  <span style={{ fontWeight: s.scope === '*' ? 700 : 600 }}>{scopeLabel(s.scope, scopes)}</span>
-                  <br />
-                  <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.path || s.scope}</code>
-                </span>
-              </label>
-            ))}
-          </div>
-        ) : (
-          <span style={mutedText}>Kapsam listesi yüklenemedi.</span>
-        )}
-      </fieldset>
+      <ScopePicker scopes={scopes} selected={form.scopes} onToggle={toggleScope} />
 
       {isPk ? (
         <label>
@@ -461,6 +631,7 @@ export default function AdminApiKeys() {
   /** Tam anahtar yalnızca bu state'te, modal kapanınca silinir. */
   const [revealed, setRevealed] = useState(null);
   const [usageKey, setUsageKey] = useState(null);
+  const [editKey, setEditKey] = useState(null);
 
   const loadClients = useCallback(async () => {
     setClientsErr('');
@@ -819,6 +990,9 @@ export default function AdminApiKeys() {
                           </button>
                           {active ? (
                             <>
+                              <button type="button" className="tab-button secondary" disabled={busy} onClick={() => setEditKey(k)}>
+                                Düzenle
+                              </button>
                               <button type="button" className="tab-button secondary" disabled={busy} onClick={() => rotateKey(k)}>
                                 {busy ? '…' : 'Yenile'}
                               </button>
@@ -859,6 +1033,20 @@ export default function AdminApiKeys() {
 
       {usageKey ? (
         <KeyUsageModal apiKey={usageKey} token={token} logout={logout} onClose={() => setUsageKey(null)} />
+      ) : null}
+
+      {editKey ? (
+        <KeyEditModal
+          apiKey={editKey}
+          scopes={scopes}
+          token={token}
+          logout={logout}
+          onClose={() => setEditKey(null)}
+          onSaved={(updated) => {
+            setKeys((list) => list.map((x) => (x.key_id === updated.key_id ? { ...x, ...updated } : x)));
+            setEditKey(null);
+          }}
+        />
       ) : null}
 
       {revealed ? <RevealedKeyModal revealed={revealed} onClose={() => setRevealed(null)} /> : null}

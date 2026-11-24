@@ -365,6 +365,29 @@ def test_v1_wellness_chat(fake_wellness):
     run(t())
 
 
+def test_patch_scopes_keeps_same_key(fake_wellness):
+    """Arayüzdeki 'Düzenle': kapsam değişir, anahtar aynı kalır ve hemen geçerli olur."""
+    async def t():
+        async with client() as c:
+            raw, key_id, _ = await make_key(c, scopes=["analyze:togg"])
+            assert (await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": raw})).status_code == 403
+            r = await c.patch(f"/admin/keys/{key_id}", json={"scopes": ["analyze:togg", "wellness:chat"]}, headers=ADMIN)
+            assert r.status_code == 200 and r.json()["scopes"] == ["analyze:togg", "wellness:chat"]
+            assert (await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": raw})).status_code == 200
+            assert (await togg(c, raw)).status_code == 200
+            # kapsam geri alınınca sohbet yine kapanır
+            r = await c.patch(f"/admin/keys/{key_id}", json={"scopes": ["analyze:togg"]}, headers=ADMIN)
+            assert r.status_code == 200
+            assert (await c.post("/v1/wellness/chat", json=CHAT, headers={"X-API-Key": raw})).status_code == 403
+            # limit ve süre: kısmi güncelleme, süre null ile kaldırılır
+            r = await c.patch(f"/admin/keys/{key_id}", json={"limits": {"rpm": 30}, "expires_at": None}, headers=ADMIN)
+            assert r.status_code == 200 and r.json()["limits"]["rpm"] == 30 and r.json()["expires_at"] is None
+            # bilinmeyen kapsam reddedilir
+            r = await c.patch(f"/admin/keys/{key_id}", json={"scopes": ["yok:boyle"]}, headers=ADMIN)
+            assert r.status_code == 400
+    run(t())
+
+
 def test_legacy_wellness_chat_requires_key(fake_wellness):
     calls, state = fake_wellness
 
