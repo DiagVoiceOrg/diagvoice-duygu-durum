@@ -1,8 +1,19 @@
 # DiagVoice TOGG Analiz API'si
 
-Sürüm 1.4 · 24 Kasım 2026
+Sürüm 1.5 · 25 Kasım 2026
 
 ## 1. Genel bakış
+
+Bu belge, TOGG'un DiagVoice API'sine entegrasyonu için gereken tüm bilgileri içerir. TOGG anahtarıyla kullanılabilen uçlar:
+
+| Uç | Amaç | Yetki |
+|---|---|---|
+| `POST /v1/analyze/togg` | Ses kaydından duygu ve WURSS sağlık sinyali (Bölüm 3–8) | `analyze:togg` |
+| `POST /v1/wellness/chat` | Markalanabilir wellness sohbet asistanı; metin veya ses (Bölüm 9) | `wellness:chat` |
+| `POST /v1/jobs` | Analizi kuyruğa gönderip sonucu sonradan alma (Bölüm 10) | `analyze:togg` |
+| `GET /v1/me`, `GET /v1/models` | Anahtar bilgisi, limitler ve erişilebilen uçlar | Geçerli anahtar |
+
+### Ses analizi
 
 TOGG Analiz API'si, sürücüden alınan kısa bir ses kaydını analiz eder ve tek yanıtta iki sonuç döner:
 
@@ -18,7 +29,7 @@ TOGG Analiz API'si, sürücüden alınan kısa bir ses kaydını analiz eder ve 
 | İstek biçimi | `multipart/form-data` |
 | Yanıt biçimi | `application/json` (UTF-8) |
 | Kimlik doğrulama | API anahtarı (bkz. Bölüm 2) |
-| Tipik yanıt süresi | ~0,25 sn (tek istek, 5 sn'lik kayıt; bkz. Bölüm 7) |
+| Tipik yanıt süresi | ~0,7 sn (ağ ve yükleme dahil; bkz. Bölüm 7) |
 
 ## 2. Kimlik doğrulama
 
@@ -228,7 +239,10 @@ with open("kayit.m4a", "rb") as f:
     )
 if r.status_code != 200:
     err = r.json().get("error", {})
-    raise RuntimeError(f"{r.status_code} {err.get('code')}: {err.get('message')} (request_id={err.get('request_id')})")
+    raise RuntimeError(
+        f"{r.status_code} {err.get('code')}: {err.get('message')} "
+        f"(request_id={err.get('request_id')})"
+    )
 
 body = r.json()
 if body["audio_error"] is None:
@@ -262,7 +276,8 @@ client.newCall(request).execute().use { resp ->
     val json = JSONObject(resp.body!!.string())
     if (!resp.isSuccessful) {
         val err = json.getJSONObject("error")
-        error("HTTP ${resp.code} ${err.getString("code")} (request_id=${err.getString("request_id")})")
+        error("HTTP ${resp.code} ${err.getString("code")} " +
+              "(request_id=${err.getString("request_id")})")
     }
     if (json.isNull("audio_error")) {
         val audio = json.getJSONObject("audio")
@@ -277,15 +292,15 @@ client.newCall(request).execute().use { resp ->
 
 ## 7. Performans
 
-10 Kasım 2026'da üretim sunucusunda ölçülmüştür (5 sn'lik, 150 KB M4A kayıt):
+25 Kasım 2026'da GPU'lu üretim sunucusunda, Türkiye'deki bir istemciden ölçülmüştür (3–12 sn'lik M4A kayıtlar, 150–400 KB):
 
-| Senaryo | Medyan yanıt süresi | p95 |
+| Senaryo | Medyan yanıt süresi | En kötü |
 |---|---|---|
-| Tek istemci, ardışık istekler | 0,25 sn | 0,27 sn |
-| 10 eşzamanlı istemci | 1,6 sn | 1,7 sn |
-| 50 eşzamanlı istemci | 8,6 sn | 9,0 sn |
+| Tek istemci, ardışık istekler | 0,7 sn | 0,9 sn |
+| 10 eşzamanlı istemci | 1,5 sn | 2,2 sn |
+| Sunucu yeniden başladıktan sonraki ilk istek | — | ~20 sn (modeller belleğe yüklenir; tek seferlik) |
 
-Süreler ağ gecikmesini ve ses yüklemesini içerir.
+Süreler ağ gecikmesini ve ses yüklemesini içerir. Tüm ölçümlerde yanıtlar eksiksizdir (`partial == false`).
 
 **Kayıt uzunluğu ve boyutu süreyi doğrudan etkiler.** Örneğin 49 sn'lik, 48 kHz WAV (4,7 MB) bir kayıtta sunucu tarafı işlem ~3 sn sürmüş, yükleme süresi buna eklenmiştir. Hızlı yanıt için:
 
@@ -302,6 +317,8 @@ Limitler anahtar başınadır ve anahtar oluşturulurken DiagVoice tarafından b
 | Aynı anda işlenen istek | 5 |
 | Aylık istek kotası | Sözleşmeye göre |
 
+TOGG üretim anahtarının mevcut limitleri: dakikada **600** istek, aynı anda **20** istek, aylık kota yok.
+
 - Aynı kaydı paralel olarak birden çok kez göndermeyin.
 - Analiz edilecek her ses kaydı için bir istek gönderin; sürekli akış (streaming) desteklenmemektedir.
 - Kayıtlar yalnızca analiz amacıyla iletilmelidir; kayıt içeriğinde kişisel bilgi bulunmamasına özen gösterin.
@@ -317,7 +334,7 @@ olarak özelleştirilebilir. **API anahtarı zorunludur** ve anahtarınızda `we
 | Uç nokta | `POST /v1/wellness/chat` |
 | Metin modu | `application/json` |
 | Ses modu | `multipart/form-data` (sesli mesaj STT ile metne çevrilir) |
-| Tipik yanıt süresi | 3–8 sn |
+| Tipik yanıt süresi | Metin: 1–2 sn · Ses: kayıt uzunluğuna bağlı, birkaç saniye |
 
 ### Metin modu
 
@@ -405,7 +422,7 @@ Tanımsız alanlar da reddedilir.
 
 ```json
 {
-  "message": "Yorgun hissettiğini duymak üzücü. Bu yorgunluğun sebebi hakkında biraz daha paylaşmak ister misin?",
+  "message": "Yorgun hissettiğini duymak üzücü. Biraz daha anlatmak ister misin?",
   "transcript": null
 }
 ```
@@ -421,14 +438,16 @@ Hatalar Bölüm 5'teki biçimdedir. Bu uca özgü durumlar: `400 invalid_request
 ```bash
 curl -X POST https://aiapi.diagvoice.com/v1/wellness/chat \
   -H "Authorization: Bearer $DIAGVOICE_API_KEY" -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Bugün biraz yorgunum."}],"locale":"tr","config":{"assistant_name":"TOGG Asistan","brand":{"name":"TOGG"}}}'
+  -d '{"messages":[{"role":"user","content":"Bugün biraz yorgunum."}],
+       "locale":"tr",
+       "config":{"assistant_name":"TOGG Asistan","brand":{"name":"TOGG"}}}'
 ```
 
 > Asistan destekleyici bir sohbet aracıdır; tıbbi veya psikolojik teşhis/tedavi sunmaz.
 
 ## 10. Asenkron iş API'si (isteğe bağlı)
 
-Normal kullanımda `POST /v1/analyze/togg` yeterlidir (yanıt ~0,25 sn). Uzun kayıtlarda, yoğun saatlerde veya sonucu
+Normal kullanımda `POST /v1/analyze/togg` yeterlidir (yanıt ~0,7 sn). Uzun kayıtlarda, yoğun saatlerde veya sonucu
 beklemek istemediğiniz durumlarda işi kuyruğa gönderip sonucu sonradan alabilirsiniz. Bağlantı kopsa bile iş kaybolmaz.
 
 | Uç | Açıklama |
@@ -453,6 +472,16 @@ curl -X POST "https://aiapi.diagvoice.com/v1/jobs?wait=10" \
 - `/v1` altındaki uçlarda mevcut alanların adı ve anlamı değişmez. Yanıtlara yeni alanlar eklenebilir; istemcilerin bilinmeyen alanları yok sayması gerekir.
 - **Eski uç (`POST /togg-analyze`)**: Geçiş süresince anahtarsız çalışmaya devam eder; yanıtında `partial` alanı yoktur. Geçiş tamamlandığında bu uç kapatılacak, öncesinde bildirim yapılacaktır. Yeni entegrasyonlarda yalnızca `/v1/analyze/togg` kullanın.
 
-## 12. İletişim
+## 12. Sürüm geçmişi
 
-Teknik sorular, anahtar talepleri ve entegrasyon desteği için DiagVoice ekibiyle iletişime geçin.
+| Sürüm | Tarih | Değişiklik |
+|---|---|---|
+| 1.5 | 25 Kasım 2026 | Uç özeti eklendi; performans değerleri GPU sunucusunda yeniden ölçüldü; TOGG anahtar limitleri eklendi. |
+| 1.4 | 24 Kasım 2026 | Wellness sohbet: `config` ile marka ve davranış özelleştirme; ses modunda boş geçmiş. |
+| 1.3 | 24 Kasım 2026 | Wellness sohbet ucu (`/v1/wellness/chat`) eklendi. |
+| 1.2 | 11 Kasım 2026 | Asenkron iş API'si (`/v1/jobs`) ve webhook. |
+
+## 13. İletişim
+
+Teknik sorular, anahtar talepleri ve entegrasyon desteği için DiagVoice ekibiyle iletişime geçin. Destek taleplerinde
+ilgili yanıtın `request_id` değerini paylaşmanız sorunun hızla bulunmasını sağlar.
