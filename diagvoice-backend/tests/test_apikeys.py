@@ -328,8 +328,9 @@ def fake_wellness(monkeypatch):
     calls = []
     state = {"error": None}
 
-    async def fake_chat(*, messages, client_ip, locale=None, session_id=None):
+    async def fake_chat(*, messages, client_ip, locale=None, session_id=None, config=None):
         calls.append(client_ip)
+        state["config"] = config
         if state["error"]:
             raise WellnessChatError(state["error"], status_code=503)
         return "Merhaba, nasıl yardımcı olabilirim?", {}
@@ -364,21 +365,35 @@ def test_v1_wellness_chat(fake_wellness):
     run(t())
 
 
-def test_legacy_wellness_chat_optional_key(fake_wellness):
-    calls, _ = fake_wellness
+def test_legacy_wellness_chat_requires_key(fake_wellness):
+    calls, state = fake_wellness
 
     async def t():
         async with client() as c:
-            r = await c.post("/wellness/companion/chat", json=CHAT)  # landing widget: anahtarsız
-            assert r.status_code == 200 and not calls[-1].startswith("apikey:")
+            # API_KEY_LEGACY_MODE=optional olsa bile sohbet ucu anahtar ister; hata gövdesi widget biçiminde
+            r = await c.post("/wellness/companion/chat", json=CHAT)
+            assert r.status_code == 401 and not calls
+            assert isinstance(r.json()["error"], str) and r.json()["code"] == "missing_api_key"
             r = await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": "dv_sk_abcdefgh_" + "A" * 32})
-            assert r.status_code == 401
+            assert r.status_code == 401 and r.json()["code"] == "invalid_api_key"
             togg_only, _, _ = await make_key(c, scopes=["analyze:togg"])
             assert (await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": togg_only})).status_code == 403
             raw, key_id, _ = await make_key(c, scopes=["wellness:chat"])
             r = await c.post("/wellness/companion/chat", json=CHAT, headers={"X-API-Key": raw})
             assert r.status_code == 200 and calls[-1] == f"apikey:{key_id}"
             assert r.json() == {"message": "Merhaba, nasıl yardımcı olabilirim?", "transcript": None}
+            assert state["config"] is None
+            # config gönderilirse doğrulanıp servise geçer
+            body = {**CHAT, "config": {"assistant_name": "TOGG Asistan", "brand": {"name": "TOGG"}, "temperature": 0.4}}
+            r = await c.post("/wellness/companion/chat", json=body, headers={"X-API-Key": raw})
+            assert r.status_code == 200
+            assert state["config"] == {"assistant_name": "TOGG Asistan", "brand": {"name": "TOGG"}, "temperature": 0.4}
+            # geçersiz config → 400, hangi alanın hatalı olduğu mesajda
+            bad = {**CHAT, "config": {"temperature": 9}}
+            r = await c.post("/wellness/companion/chat", json=bad, headers={"X-API-Key": raw})
+            assert r.status_code == 400 and "config.temperature" in r.json()["error"]
+            bad = {**CHAT, "config": {"bilinmeyen_alan": 1}}
+            assert (await c.post("/wellness/companion/chat", json=bad, headers={"X-API-Key": raw})).status_code == 400
     run(t())
 
 

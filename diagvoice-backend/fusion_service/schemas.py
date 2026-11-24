@@ -129,10 +129,65 @@ class WellnessChatMessage(BaseModel):
     content: str = Field(..., description="UTF-8 sohbet metni")
 
 
+class WellnessBrand(BaseModel):
+    """Marka bilgisi. Gönderilen alan varsayılanı (DiagVoice) ezer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(None, min_length=1, max_length=80, description="Marka/ürün adı (ör. TOGG)")
+    description: str | None = Field(None, max_length=2000, description="Markanın kısa tanıtımı")
+    creator: str | None = Field(None, min_length=1, max_length=120,
+                                description="'Seni kim tasarladı?' sorusunun cevabı (varsayılan: marka adı)")
+    website: str | None = Field(None, max_length=200, description="Yönlendirme yapılacak site (https://...)")
+    referrals: bool | None = Field(None, description="Uygun durumlarda siteye nazik yönlendirme yapılsın mı")
+
+    @model_validator(mode="after")
+    def _website_scheme(self) -> "WellnessBrand":
+        if self.website and not self.website.startswith(("https://", "http://")):
+            raise ValueError("brand.website http:// veya https:// ile başlamalı.")
+        return self
+
+
+class WellnessConfig(BaseModel):
+    """
+    Sohbet özelleştirmesi. Gönderilen her alan varsayılan değeri ezer; gönderilmeyen alan varsayılanda kalır.
+    Wellness çerçevesi (tanı koymama, ilaç önermeme, güvenlik kuralları) değiştirilemez ve her zaman uygulanır.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # --- kimlik ve davranış (system prompt'un özelleştirilebilir katmanı)
+    system_prompt: str | None = Field(
+        None, max_length=8000,
+        description="Özelleştirilebilir katmanın TAMAMININ yerine geçer (kimlik, marka, tarz). "
+                    "Wellness çerçevesi yine de eklenir. Verilirse aşağıdaki kimlik alanları kullanılmaz.",
+    )
+    assistant_name: str | None = Field(None, min_length=1, max_length=80, description="Asistanın adı")
+    brand: WellnessBrand | None = None
+    style: str | None = Field(None, max_length=1500, description="Konuşma tarzı (varsayılan: sakin, empatik, ...)")
+    response_format: str | None = Field(None, max_length=1500, description="Yanıt biçimi (varsayılan: kısa, doğal)")
+    introduce_self: bool | None = Field(None, description="İlk mesajda kendini tanıtsın mı (varsayılan: evet)")
+    instructions: str | None = Field(None, max_length=4000, description="Varsayılan prompt'a eklenecek ek talimatlar")
+
+    # --- model ayarları
+    model: str | None = Field(None, max_length=100, description="LLM modeli (sunucudaki izin listesinden)")
+    temperature: float | None = Field(None, ge=0.0, le=1.5)
+    top_p: float | None = Field(None, gt=0.0, le=1.0)
+    max_tokens: int | None = Field(None, ge=16, le=4000, description="Yanıt başına en fazla token")
+    presence_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+
+    # --- araçlar
+    psych_analysis: bool | None = Field(
+        None, description="Duygusal içerikte Türkçe psikolojik sinyal analizini kullansın mı (varsayılan: evet)")
+    max_tool_rounds: int | None = Field(None, ge=0, le=3)
+
+
 class WellnessChatRequest(BaseModel):
     messages: list[WellnessChatMessage] = Field(..., min_length=1)
     locale: str | None = Field(None, description="İsteğe bağlı: tr | en")
     session_id: str | None = Field(None, description="İsteğe bağlı anonim oturum kimliği")
+    config: WellnessConfig | None = Field(None, description="İsteğe bağlı özelleştirme (bkz. WellnessConfig)")
 
     @model_validator(mode="after")
     def _at_least_one_user_message(self) -> "WellnessChatRequest":

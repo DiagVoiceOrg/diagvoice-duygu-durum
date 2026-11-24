@@ -10,7 +10,8 @@ Akış (istek başına):
   6. Eşzamanlı istek sınırı → 429 concurrency_limited
   7. request.state.api_key doldurulur (audit log'a key_id/client_id geçer), kullanım kaydedilir
 
-/v1/* yollarında anahtar zorunludur. Eski uçlarda API_KEY_LEGACY_MODE belirler:
+/v1/* yollarında ve scopes.ALWAYS_REQUIRE_KEY'deki eski yollarda (wellness sohbet) anahtar zorunludur.
+Diğer eski uçlarda API_KEY_LEGACY_MODE belirler:
   optional (varsayılan)  anahtar yoksa eskisi gibi çalışır, varsa doğrulanır ve limitler uygulanır
   required               anahtar zorunlu (geçiş tamamlanınca)
 """
@@ -99,6 +100,18 @@ async def _enforce_limits(key: ApiKey) -> dict:
     return headers
 
 
+def _auth_error(request: Request, path: str, status: int, code: str, message: str, *, legacy: bool, headers=None):
+    """Wellness widget'ı hata gövdesini `{"error": "<mesaj>"}` olarak okur; o yolda bu biçim korunur."""
+    if path.startswith("/wellness/"):
+        from fastapi.responses import JSONResponse
+
+        rid = getattr(request.state, "request_id", "")
+        h = dict(headers or {})
+        h.setdefault("X-Request-ID", rid)
+        return JSONResponse(status_code=status, content={"error": message, "code": code, "request_id": rid}, headers=h)
+    return error_response(request, status, code, message, legacy=legacy, headers=headers)
+
+
 async def api_key_middleware(request: Request, call_next):
     rid = (request.headers.get("x-request-id") or "").strip()[:64] or uuid.uuid4().hex[:16]
     request.state.request_id = rid
@@ -115,19 +128,19 @@ async def api_key_middleware(request: Request, call_next):
     legacy = not is_v1
     raw = K.extract_from_headers(request.headers)
     if raw is None:
-        if legacy and legacy_mode() == "optional":
+        if legacy and legacy_mode() == "optional" and path not in S.ALWAYS_REQUIRE_KEY:
             resp = await call_next(request)
             resp.headers.setdefault("X-Request-ID", rid)
             return resp
-        return error_response(request, 401, "missing_api_key",
-                              "API anahtarı gerekli: 'Authorization: Bearer <anahtar>' veya 'X-API-Key' başlığı.",
-                              legacy=legacy, headers={"WWW-Authenticate": "Bearer"})
+        return _auth_error(request, path, 401, "missing_api_key",
+                           "API anahtarı gerekli: 'Authorization: Bearer <anahtar>' veya 'X-API-Key' başlığı.",
+                           legacy=legacy, headers={"WWW-Authenticate": "Bearer"})
 
     try:
         key = await authenticate(raw, request, scope)
         limit_headers = await _enforce_limits(key)
     except ApiError as e:
-        return error_response(request, e.status, e.code, e.message, legacy=legacy, headers=e.headers)
+        return _auth_error(request, path, e.status, e.code, e.message, legacy=legacy, headers=e.headers)
 
     request.state.api_key = key
     store = get_store()

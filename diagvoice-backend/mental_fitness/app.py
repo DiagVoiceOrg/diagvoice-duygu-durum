@@ -191,7 +191,12 @@ async def validate_transcript_meaning(body: TranscriptMeaningRequest):
             api_key=DEEPSEEK_API_KEY or None,
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        # DeepSeek ulaşılamaz/bakiye bitti vb. Yerel tekrar filtresi zaten geçti (validate içinde önce o çalışır).
+        # Zorunlu değilse akışı durdurma: sesli sohbet ve mental fitness yalnızca bu ek kontrol yüzünden düşmesin.
+        if _REQUIRE_DEEPSEEK:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        _log.warning("transcript_validation_llm_unavailable fallback=heuristic err=%s", str(e)[:300])
+        return {"meaningful": True, "reason": "llm_unavailable_heuristic_only", "validation_skipped": True}
 
     validation_skipped = not (_llm_on and bool(DEEPSEEK_API_KEY))
     return {"meaningful": meaningful, "reason": reason, "validation_skipped": validation_skipped}

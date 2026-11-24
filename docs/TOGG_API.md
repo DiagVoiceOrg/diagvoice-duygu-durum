@@ -1,6 +1,6 @@
 # DiagVoice TOGG Analiz API'si
 
-Sürüm 1.3 · 24 Kasım 2026
+Sürüm 1.4 · 24 Kasım 2026
 
 ## 1. Genel bakış
 
@@ -308,8 +308,9 @@ Limitler anahtar başınadır ve anahtar oluşturulurken DiagVoice tarafından b
 
 ## 9. Wellness sohbet (isteğe bağlı)
 
-Sürücüyle Türkçe/İngilizce destekleyici sohbet yürüten LLM tabanlı asistan. Metin veya sesli mesaj alır. Anahtarınızda
-`wellness:chat` yetkisi bulunmalıdır (yoksa `403 scope_denied`).
+Sürücüyle Türkçe/İngilizce destekleyici sohbet yürüten LLM tabanlı asistan. Metin veya sesli mesaj alır, marka ve davranış
+olarak özelleştirilebilir. **API anahtarı zorunludur** ve anahtarınızda `wellness:chat` yetkisi bulunmalıdır
+(yoksa `403 scope_denied`).
 
 | Özellik | Değer |
 |---|---|
@@ -340,8 +341,65 @@ Sunucu sohbet geçmişini saklamaz; her istekte geçmişi `messages` içinde gö
 
 ### Ses modu
 
-Form alanları: `file` (ses dosyası), `messages` (önceki mesajların JSON metni; ilk mesajda `[]`), isteğe bağlı `locale`,
-`session_id`. Ses dosyası en fazla 15 MB.
+Form alanları: `file` (ses dosyası), `messages` (önceki mesajların JSON metni; sohbet sesle başlıyorsa `[]`), isteğe bağlı
+`locale`, `session_id` ve `config` (aşağıdaki nesnenin JSON metni). Ses dosyası en fazla 15 MB.
+
+### Özelleştirme (`config`)
+
+Asistanı kendi markanıza göre uyarlayabilirsiniz. `config` içinde **gönderdiğiniz her alan varsayılan değerin yerine geçer**;
+göndermediğiniz alanlar varsayılanda kalır. Varsayılan asistan "DiagVoice Wellness Companion"dır.
+
+**Değiştirilemeyen kısım:** Wellness çerçevesi her istekte otomatik olarak eklenir ve önceliklidir. Bu çerçeve şunları kapsar:
+tanı koymama, ilaç/medikal tavsiye vermeme, terapi iddiasında bulunmama, kullanıcıyı korkutmama, teknik çıktı göstermeme ve
+analiz sonuçlarını kesin gerçek gibi sunmama. `config` ile (veya kullanıcı mesajıyla) bu kurallar devre dışı bırakılamaz.
+
+| Alan | Tür | Açıklama |
+|---|---|---|
+| `assistant_name` | metin (≤ 80) | Asistanın adı. Ör. `"TOGG Asistan"` |
+| `brand.name` | metin (≤ 80) | Marka/ürün adı. Verilirse DiagVoice'a ait tanıtım, site ve yönlendirme kaldırılır. |
+| `brand.description` | metin (≤ 2000) | Markanın kısa tanıtımı; asistan sorulduğunda kullanır. |
+| `brand.creator` | metin (≤ 120) | "Seni kim tasarladı?" sorusunun cevabı. Verilmezse `brand.name`. |
+| `brand.website` | metin (≤ 200) | Uygun durumlarda yönlendirilecek site (`https://...`). |
+| `brand.referrals` | mantıksal | Siteye nazik yönlendirme yapılsın mı. Varsayılan: site verildiyse evet. |
+| `style` | metin (≤ 1500) | Konuşma tarzı. Varsayılan: sakin, empatik, yargılamayan, destekleyici, doğal. |
+| `response_format` | metin (≤ 1500) | Yanıt biçimi. Varsayılan: kısa, doğal, teknik detaysız. |
+| `introduce_self` | mantıksal | İlk mesajda kendini tanıtsın mı. Varsayılan: evet. |
+| `instructions` | metin (≤ 4000) | Varsayılan kimliğe eklenecek ek talimatlar (ör. "Sürüş sırasında 2–3 cümleyi geçme"). |
+| `system_prompt` | metin (≤ 8000) | Kimlik/marka/tarz katmanının **tamamının yerine** geçer; verilirse yukarıdaki kimlik alanları kullanılmaz. Wellness çerçevesi yine eklenir. |
+| `temperature` | sayı (0–1.5) | Yaratıcılık. Varsayılan: 0.7 |
+| `top_p` | sayı (0–1] | Örnekleme. |
+| `max_tokens` | tam sayı (16–4000) | Yanıt başına en fazla token (yanıt uzunluğu sınırı). |
+| `presence_penalty`, `frequency_penalty` | sayı (-2–2) | Tekrar kontrolü. |
+| `model` | metin | LLM modeli. Yalnızca DiagVoice'un izin verdiği modeller; aksi halde `400`. |
+| `psych_analysis` | mantıksal | Duygusal içerikte Türkçe psikolojik sinyal analizini kullansın mı. Varsayılan: evet. |
+| `max_tool_rounds` | tam sayı (0–3) | Analiz aracı en fazla kaç kez çağrılsın. |
+
+Örnek — TOGG markasıyla:
+
+```json
+{
+  "messages": [{ "role": "user", "content": "Seni kim tasarladı?" }],
+  "locale": "tr",
+  "config": {
+    "assistant_name": "TOGG Asistan",
+    "brand": {
+      "name": "TOGG",
+      "description": "TOGG, Türkiye'nin küresel ölçekte bir teknoloji markasıdır.",
+      "creator": "TOGG",
+      "website": "https://www.togg.com.tr",
+      "referrals": false
+    },
+    "instructions": "Kullanıcı araç kullanıyor olabilir; yanıtların kısa ve sakin olsun.",
+    "temperature": 0.6,
+    "max_tokens": 300
+  }
+}
+```
+
+Bu istekte asistan kendini "TOGG Asistan" olarak tanıtır ve kim tasarladı sorusuna "TOGG" der. Wellness kuralları aynen geçerlidir.
+
+Geçersiz bir `config` değeri `400 invalid_request` döner; mesajda hatalı alan yazar (ör. `config.temperature: ...`).
+Tanımsız alanlar da reddedilir.
 
 ### Yanıt
 
@@ -361,7 +419,9 @@ Hatalar Bölüm 5'teki biçimdedir. Bu uca özgü durumlar: `400 invalid_request
 (ses dosyası büyük), `503 service_unavailable` (sohbet servisi geçici olarak kullanılamıyor).
 
 ```bash
-curl -X POST https://aiapi.diagvoice.com/v1/wellness/chat   -H "Authorization: Bearer $DIAGVOICE_API_KEY" -H "Content-Type: application/json"   -d '{"messages":[{"role":"user","content":"Bugün biraz yorgunum."}],"locale":"tr"}'
+curl -X POST https://aiapi.diagvoice.com/v1/wellness/chat \
+  -H "Authorization: Bearer $DIAGVOICE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Bugün biraz yorgunum."}],"locale":"tr","config":{"assistant_name":"TOGG Asistan","brand":{"name":"TOGG"}}}'
 ```
 
 > Asistan destekleyici bir sohbet aracıdır; tıbbi veya psikolojik teşhis/tedavi sunmaz.

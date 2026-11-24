@@ -93,6 +93,34 @@ def build_router(h: SimpleNamespace) -> APIRouter:
         return await h.proxy_analyze_turkish_psych_signals(request, body)
 
     # ------------------------------------------------------------------ Wellness sohbet (LLM)
+    _WELLNESS_CONFIG_SCHEMA = {
+        "type": "object",
+        "description": "İsteğe bağlı özelleştirme. Gönderilen her alan varsayılanı (DiagVoice) ezer. "
+                       "Wellness çerçevesi (tanı/ilaç/terapi yasakları, güvenlik kuralları) değiştirilemez.",
+        "properties": {
+            "system_prompt": {"type": "string", "maxLength": 8000,
+                              "description": "Kimlik/marka/tarz katmanının tamamının yerine geçer; wellness çerçevesi yine eklenir"},
+            "assistant_name": {"type": "string", "maxLength": 80},
+            "brand": {"type": "object", "properties": {
+                "name": {"type": "string", "maxLength": 80},
+                "description": {"type": "string", "maxLength": 2000},
+                "creator": {"type": "string", "maxLength": 120, "description": "'Seni kim tasarladı?' cevabı"},
+                "website": {"type": "string", "maxLength": 200},
+                "referrals": {"type": "boolean"}}},
+            "style": {"type": "string", "maxLength": 1500},
+            "response_format": {"type": "string", "maxLength": 1500},
+            "introduce_self": {"type": "boolean"},
+            "instructions": {"type": "string", "maxLength": 4000},
+            "model": {"type": "string", "description": "Sunucunun izin listesindeki modellerden biri"},
+            "temperature": {"type": "number", "minimum": 0, "maximum": 1.5},
+            "top_p": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "max_tokens": {"type": "integer", "minimum": 16, "maximum": 4000},
+            "presence_penalty": {"type": "number", "minimum": -2, "maximum": 2},
+            "frequency_penalty": {"type": "number", "minimum": -2, "maximum": 2},
+            "psych_analysis": {"type": "boolean"},
+            "max_tool_rounds": {"type": "integer", "minimum": 0, "maximum": 3},
+        },
+    }
     _WELLNESS_BODY = {
         "requestBody": {
             "required": True,
@@ -116,9 +144,20 @@ def build_router(h: SimpleNamespace) -> APIRouter:
                             },
                             "locale": {"type": "string", "enum": ["tr", "en"], "default": "tr"},
                             "session_id": {"type": "string", "description": "İsteğe bağlı anonim oturum kimliği"},
+                            "config": _WELLNESS_CONFIG_SCHEMA,
                         },
                     },
-                    "example": {"messages": [{"role": "user", "content": "Bugün biraz yorgunum."}], "locale": "tr"},
+                    "example": {
+                        "messages": [{"role": "user", "content": "Bugün biraz yorgunum."}],
+                        "locale": "tr",
+                        "config": {
+                            "assistant_name": "TOGG Asistan",
+                            "brand": {"name": "TOGG", "creator": "TOGG", "website": "https://www.togg.com.tr",
+                                      "referrals": False},
+                            "instructions": "Sürücü araç kullanırken konuşuyor olabilir; yanıtların 2-3 cümleyi geçmesin.",
+                            "temperature": 0.6,
+                        },
+                    },
                 },
                 "multipart/form-data": {
                     "schema": {
@@ -129,6 +168,7 @@ def build_router(h: SimpleNamespace) -> APIRouter:
                             "messages": {"type": "string", "description": "Önceki mesajlar, JSON dizi metni ([] olabilir)"},
                             "locale": {"type": "string", "enum": ["tr", "en"]},
                             "session_id": {"type": "string"},
+                            "config": {"type": "string", "description": "İsteğe bağlı: config nesnesinin JSON metni"},
                         },
                     }
                 },

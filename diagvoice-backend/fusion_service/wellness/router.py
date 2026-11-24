@@ -10,7 +10,12 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
-from fusion_service.schemas import WellnessChatErrorResponse, WellnessChatRequest, WellnessChatResponse
+from fusion_service.schemas import (
+    WellnessChatErrorResponse,
+    WellnessChatRequest,
+    WellnessChatResponse,
+    WellnessConfig,
+)
 from fusion_service.wellness.audit import merge_wellness_audit, set_wellness_audit, wellness_audit_base
 from fusion_service.wellness.service import (
     WellnessChatError,
@@ -40,6 +45,26 @@ def _voice_upload_from_form(form) -> UploadFile | None:
         if _is_voice_upload(candidate):
             return candidate  # type: ignore[return-value]
     return None
+
+
+def _config_dict(cfg: WellnessConfig | None) -> dict | None:
+    if cfg is None:
+        return None
+    d = cfg.model_dump(exclude_none=True)
+    return d or None
+
+
+def _parse_form_config(raw) -> dict | None:
+    """Ses modunda `config` form alanı: JSON metni."""
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        data = json.loads(str(raw))
+    except json.JSONDecodeError as e:
+        raise WellnessChatError("config alanı geçerli bir JSON nesnesi olmalı.") from e
+    if not isinstance(data, dict):
+        raise WellnessChatError("config alanı bir JSON nesnesi olmalı.")
+    return _config_dict(WellnessConfig.model_validate(data))
 
 
 def _client_ip(request: Request) -> str:
@@ -118,6 +143,7 @@ async def wellness_companion_chat(request: Request):
             locale = str(form.get("locale") or "tr").strip() or "tr"
             session_id = str(form.get("session_id") or "").strip() or None
             messages = parse_messages_json(str(raw_messages))
+            config = _parse_form_config(form.get("config"))
 
             audio_bytes = await upload.read()
             filename = upload.filename or "recording.webm"
@@ -149,6 +175,7 @@ async def wellness_companion_chat(request: Request):
                 client_ip=_client_ip(request),
                 locale=locale,
                 session_id=session_id,
+                config=config,
             )
             audit["transcript_len"] = len(transcript)
             set_wellness_audit(request, merge_wellness_audit(request, audit))
@@ -170,6 +197,7 @@ async def wellness_companion_chat(request: Request):
             client_ip=_client_ip(request),
             locale=body.locale,
             session_id=body.session_id,
+            config=_config_dict(body.config),
         )
         set_wellness_audit(request, merge_wellness_audit(request, audit))
         return WellnessChatResponse(message=message)
@@ -182,6 +210,9 @@ async def wellness_companion_chat(request: Request):
     except ValidationError as e:
         errs = e.errors()
         msg = errs[0].get("msg", "Geçersiz istek.") if errs else "Geçersiz istek."
+        loc = ".".join(str(x) for x in (errs[0].get("loc") or ())) if errs else ""
+        if loc:
+            msg = f"{loc}: {msg}"  # ör. "config.temperature: Input should be less than or equal to 1.5"
         if not getattr(request.state, "wellness_audit_base", None):
             request.state.wellness_audit_base = wellness_audit_base(mode="text")
         return _error_response(request, WellnessChatError(str(msg)))

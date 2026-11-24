@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from fusion_service.wellness.prompt import WELLNESS_SYSTEM_PROMPT, WELLNESS_VOICE_CONTEXT_TEMPLATE
+from fusion_service.wellness.prompt import WELLNESS_VOICE_CONTEXT_TEMPLATE, build_system_prompt
 from fusion_service.wellness.rate_limit import check_rate_limit
 
 _log = logging.getLogger("diagvoice.wellness")
@@ -67,6 +67,33 @@ def _openai_config() -> tuple[str, str, str]:
     base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
     model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     return key, base, model
+
+
+# İstekte model seçilebilir, ancak yalnızca sunucunun izin verdikleri (maliyet kontrolü).
+# WELLNESS_ALLOWED_MODELS="gpt-4o-mini,gpt-4o" — varsayılan model her zaman izinlidir.
+_LLM_PARAMS = ("temperature", "top_p", "max_tokens", "presence_penalty", "frequency_penalty")
+
+
+def _resolve_model(config: dict[str, Any] | None, default_model: str) -> str:
+    wanted = (config or {}).get("model")
+    if not wanted or wanted == default_model:
+        return default_model
+    allowed = {m.strip() for m in os.environ.get("WELLNESS_ALLOWED_MODELS", "").split(",") if m.strip()}
+    if wanted not in allowed:
+        raise WellnessChatError(
+            f"Model '{wanted}' kullanılamaz. İzinli modeller: {', '.join(sorted(allowed | {default_model}))}",
+            status_code=400,
+        )
+    return wanted
+
+
+def _llm_params(config: dict[str, Any] | None) -> dict[str, Any]:
+    params: dict[str, Any] = {"temperature": 0.7}
+    for k in _LLM_PARAMS:
+        v = (config or {}).get(k)
+        if v is not None:
+            params[k] = v
+    return params
 
 
 def _fusion_base_url() -> str:
@@ -154,6 +181,8 @@ def validate_messages(
     require_user: bool = True,
 ) -> list[dict[str, str]]:
     if not messages:
+        if not require_user:
+            return []  # ses modu: sohbet sesle başlayabilir; kullanıcı mesajı transcript'tir
         raise WellnessChatError("messages dizisi zorunludur.")
     if len(messages) > MAX_MESSAGES:
         raise WellnessChatError(f"En fazla {MAX_MESSAGES} mesaj gönderilebilir.")
@@ -231,14 +260,13 @@ async def _openai_chat(
     base_url: str,
     model: str,
     messages: list[dict[str, Any]],
+    use_tools: bool = True,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "tools": [ANALYZE_TOOL],
-        "tool_choice": "auto",
-        "temperature": 0.7,
-    }
+    payload: dict[str, Any] = {"model": model, "messages": messages, **(params or {"temperature": 0.7})}
+    if use_tools:
+        payload["tools"] = [ANALYZE_TOOL]
+        payload["tool_choice"] = "auto"
     r = await client.post(
         f"{base_url}/chat/completions",
         json=payload,
@@ -402,10 +430,14 @@ async def _run_wellness_llm(
     diagvoice_api_key: str | None,
     voice_context: str | None = None,
     route_mode: str = "text",
+    config: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    system_content = WELLNESS_SYSTEM_PROMPT
-    if voice_context:
-        system_content = f"{WELLNESS_SYSTEM_PROMPT}\n\n{voice_context}"
+    cfg = config or {}
+    # Özelleştirilebilir katman + ses bağlamı + SABİT wellness çekirdeği (en sonda, öncelikli)
+    system_content = build_system_prompt(cfg, voice_context)
+    params = _llm_params(cfg)
+    max_rounds = MAX_TOOL_ROUNDS if cfg.get("max_tool_rounds") is None else int(cfg["max_tool_rounds"])
+    use_tools = cfg.get("psych_analysis") is not False and max_rounds > 0
 
     openai_messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_content},
@@ -413,13 +445,16 @@ async def _run_wellness_llm(
     ]
 
     tool_called = False
-    for _round in range(MAX_TOOL_ROUNDS + 1):
+    for _round in range(max_rounds + 1):
         msg = await _openai_chat(
             client,
             api_key=api_key,
             base_url=openai_base,
             model=model,
             messages=openai_messages,
+            # Son turda araç verilmez: model metin yanıtı üretmek zorunda kalır
+            use_tools=use_tools and _round < max_rounds,
+            params=params,
         )
 
         tool_calls = msg.get("tool_calls") or []
@@ -437,7 +472,10 @@ async def _run_wellness_llm(
                 "tool_called": tool_called,
                 "tool_rounds": _round,
                 "response_len": len(content),
+                "model": model,
             }
+            if cfg:
+                audit["config_keys"] = sorted(k for k, v in cfg.items() if v is not None)
             return content, audit
 
         openai_messages.append(msg)
@@ -516,11 +554,13 @@ async def handle_wellness_chat(
     locale: str | None = None,
     session_id: str | None = None,
     http_client: httpx.AsyncClient | None = None,
+    config: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Metin modu — (assistant_message, audit_details)."""
     _ensure_wellness_ready(client_ip)
     validated = validate_messages(messages, require_user=True)
     api_key, openai_base, model = _openai_config()
+    model = _resolve_model(config, model)
     analyze_url = _ipv4_loopback_url(_resolve_analyze_url())
     diagvoice_api_key = os.environ.get("DIAGVOICE_API_KEY", "").strip() or None
 
@@ -538,6 +578,7 @@ async def handle_wellness_chat(
             analyze_url=analyze_url,
             diagvoice_api_key=diagvoice_api_key,
             route_mode="text",
+            config=config,
         )
         if locale:
             audit["locale"] = locale
@@ -559,6 +600,7 @@ async def handle_wellness_chat_voice(
     locale: str | None = None,
     session_id: str | None = None,
     http_client: httpx.AsyncClient | None = None,
+    config: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Ses modu — (assistant_message, transcript, audit_details)."""
     if not audio_bytes:
@@ -573,6 +615,7 @@ async def handle_wellness_chat_voice(
     validated_history = validate_messages(messages, require_user=False)
 
     api_key, openai_base, model = _openai_config()
+    model = _resolve_model(config, model)
     analyze_url = _ipv4_loopback_url(_resolve_analyze_url())
     stt_url = _resolve_stt_url()
     mf_url = _resolve_mental_fitness_url()
@@ -643,6 +686,7 @@ async def handle_wellness_chat_voice(
             diagvoice_api_key=diagvoice_api_key,
             voice_context=voice_context,
             route_mode="voice",
+            config=config,
         )
         audit["transcript_len"] = len(transcript)
         if locale:

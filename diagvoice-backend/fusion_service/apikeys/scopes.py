@@ -73,9 +73,11 @@ LEGACY_PATHS: dict[str, str] = {
     "/analyze-benchmark-v2": "model:occupational_health",
     "/analyze-turkish-psych-signals": "model:turkish_psych",
     "/analyze-depression": "model:depression",
-    # Landing widget anahtarsız kullanır (optional modda açık). Anahtar gönderilirse doğrulanır, sayılır, limitlenir.
     "/wellness/companion/chat": "wellness:chat",
 }
+
+# API_KEY_LEGACY_MODE=optional olsa bile her zaman anahtar isteyen eski yollar (ücretli LLM çağrısı yapar).
+ALWAYS_REQUIRE_KEY: frozenset[str] = frozenset({"/wellness/companion/chat"})
 
 # /v1 yolları → scope (GET /v1/models ve /v1/me yalnızca geçerli anahtar ister, scope istemez)
 V1_PATHS: dict[str, str] = {m["path"]: s for s, m in MODELS.items() if m["path"]}
