@@ -325,7 +325,7 @@ TOGG üretim anahtarının mevcut limitleri: dakikada **600** istek, aynı anda 
 
 ## 9. Wellness sohbet (isteğe bağlı)
 
-Sürücüyle Türkçe/İngilizce destekleyici sohbet yürüten LLM tabanlı asistan. Metin veya sesli mesaj alır, marka ve davranış
+Sürücüyle Türkçe/İngilizce destekleyici sohbet yürüten yapay zekâ asistanı. Metin veya sesli mesaj alır, marka ve davranış
 olarak özelleştirilebilir. **API anahtarı zorunludur** ve anahtarınızda `wellness:chat` yetkisi bulunmalıdır
 (yoksa `403 scope_denied`).
 
@@ -387,7 +387,6 @@ analiz sonuçlarını kesin gerçek gibi sunmama. `config` ile (veya kullanıcı
 | `top_p` | sayı (0–1] | Örnekleme. |
 | `max_tokens` | tam sayı (16–4000) | Yanıt başına en fazla token (yanıt uzunluğu sınırı). |
 | `presence_penalty`, `frequency_penalty` | sayı (-2–2) | Tekrar kontrolü. |
-| `model` | metin | LLM modeli. Yalnızca DiagVoice'un izin verdiği modeller; aksi halde `400`. |
 | `psych_analysis` | mantıksal | Duygusal içerikte Türkçe psikolojik sinyal analizini kullansın mı. Varsayılan: evet. |
 | `max_tool_rounds` | tam sayı (0–3) | Analiz aracı en fazla kaç kez çağrılsın. |
 
