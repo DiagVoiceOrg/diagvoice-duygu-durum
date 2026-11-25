@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -23,6 +24,11 @@ LLM_TIMEOUT_SEC = float(os.environ.get("WELLNESS_LLM_TIMEOUT_SEC", "180"))
 ANALYZE_TIMEOUT_SEC = float(os.environ.get("WELLNESS_ANALYZE_TIMEOUT_SEC", "120"))
 VOICE_TIMEOUT_SEC = float(os.environ.get("WELLNESS_VOICE_TIMEOUT_SEC", "120"))
 MAX_AUDIO_BYTES = int(os.environ.get("WELLNESS_MAX_AUDIO_BYTES", str(15 * 1024 * 1024)))
+# Sesli sohbet: STT bittikten sonra mental fitness için en fazla bu kadar beklenir; gelmezse yanıt onsuz üretilir.
+VOICE_MF_GRACE_SEC = float(os.environ.get("WELLNESS_VOICE_MF_GRACE_SEC", "1.0"))
+# Sesli sohbette ek LLM anlamlılık kontrolü (varsayılan kapalı; kısa cevapları reddedip ~1 sn ekliyordu).
+VOICE_LLM_VALIDATION = os.environ.get("WELLNESS_VOICE_LLM_VALIDATION", "0").strip().lower() in ("1", "true", "yes")
+MF_UNAVAILABLE_SUMMARY = "Ses tabanlı analiz bu turda kullanılamadı; yanıtı yalnızca söylenenlere göre ver."
 
 ANALYZE_TOOL = {
     "type": "function",
@@ -159,6 +165,62 @@ def _summarize_mental_fitness(mf: dict[str, Any]) -> str:
     if isinstance(probs, list) and probs:
         parts.append(f"Olasılık dağılımı (iç): {probs}")
     return "; ".join(parts) if parts else "Ses tabanlı mental fitness analizi tamamlandı."
+
+
+# --------------------------------------------------------------------------- sesli sohbet: transkript ve analiz
+
+# Sohbette kısa cevaplar ("Evet", "Tamam", "Teşekkür ederim") geçerlidir. Yalnızca bozuk kayıtları reddet:
+# boş metin, harf içermeyen metin, takılı tekrar ve Whisper'ın sessiz/gürültülü kayıtta uydurduğu kalıplar.
+_WHISPER_HALLUCINATIONS = (
+    "altyazı m.k",
+    "altyazi m.k",
+    "izlediğiniz için teşekkür",
+    "izlediginiz icin tesekkur",
+    "abone olmayı unutmayın",
+    "abone olmayi unutmayin",
+    "beğenmeyi ve abone olmayı",
+    "thanks for watching",
+    "thank you for watching",
+    "subtitles by",
+    "amara.org",
+    "www.",
+)
+
+
+def chat_transcript_rejection(text: str) -> str | None:
+    """Sohbet için transkript uygun değilse kısa bir neden kodu, uygunsa None döner."""
+    raw = (text or "").strip()
+    if not raw:
+        return "empty"
+    if not re.search(r"[^\W\d_]", raw, flags=re.UNICODE):
+        return "no_letters"
+    low = raw.replace("İ", "i").replace("I", "ı").lower().replace("̇", "")  # Türkçe küçük harf
+    low_en = raw.lower().replace("̇", "")  # İngilizce kalıplar ("THANK YOU FOR WATCHING") için
+    if len(low) <= 80 and any(p in low or p in low_en for p in _WHISPER_HALLUCINATIONS):
+        return "stt_hallucination"
+    words = re.findall(r"\w+", low, flags=re.UNICODE)
+    n = len(words)
+    if n >= 14:
+        from collections import Counter
+
+        if len(set(words)) / n < 0.14:
+            return "repetition"
+        if Counter(words).most_common(1)[0][1] / n > 0.32:
+            return "single_word_dominated"
+    return None
+
+
+async def _await_mental_fitness(task: asyncio.Task, grace_sec: float) -> tuple[str, str]:
+    """Mental fitness sonucunu en fazla grace_sec bekler; gelmezse veya hata verirse yanıt onsuz üretilir."""
+    try:
+        mf_body = await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, grace_sec))
+    except asyncio.TimeoutError:
+        task.cancel()
+        return MF_UNAVAILABLE_SUMMARY, "timeout"
+    except Exception as e:  # WellnessChatError dahil: analiz isteğe bağlı bir bağlamdır
+        _log.warning("wellness voice mental_fitness skipped err=%s", str(e)[:200])
+        return MF_UNAVAILABLE_SUMMARY, "error"
+    return _summarize_mental_fitness(mf_body), "ok"
 
 
 def _extract_transcript(stt_body: dict[str, Any]) -> str:
@@ -626,8 +688,21 @@ async def handle_wellness_chat_voice(
     client = http_client or httpx.AsyncClient(
         timeout=httpx.Timeout(max(LLM_TIMEOUT_SEC, VOICE_TIMEOUT_SEC), connect=30.0),
     )
+    mf_task: asyncio.Task | None = None
     try:
-        stt_task = _call_stt(
+        t0 = time.perf_counter()
+        # Mental fitness STT ile paralel başlar ama yanıt onu beklemez (bkz. VOICE_MF_GRACE_SEC).
+        mf_task = asyncio.create_task(
+            _call_mental_fitness(
+                client,
+                mf_url,
+                audio_bytes=audio_bytes,
+                filename=filename,
+                content_type=content_type,
+                api_key=diagvoice_api_key,
+            )
+        )
+        stt_body = await _call_stt(
             client,
             stt_url,
             audio_bytes=audio_bytes,
@@ -635,37 +710,34 @@ async def handle_wellness_chat_voice(
             content_type=content_type,
             locale=locale,
         )
-        mf_task = _call_mental_fitness(
-            client,
-            mf_url,
-            audio_bytes=audio_bytes,
-            filename=filename,
-            content_type=content_type,
-            api_key=diagvoice_api_key,
-        )
-        stt_body, mf_body = await asyncio.gather(stt_task, mf_task)
+        stt_ms = (time.perf_counter() - t0) * 1000
 
         transcript = _extract_transcript(stt_body)
-        if not transcript:
+        rejection = chat_transcript_rejection(transcript)
+        if rejection:
+            _log.info("wellness voice transcript rejected reason=%s len=%d", rejection, len(transcript))
             raise WellnessChatError(
                 "Kayıt net anlaşılamadı. Lütfen tekrar deneyin.",
                 status_code=400,
             )
 
-        val_body = await _call_validate_transcript(
-            client,
-            validate_url,
-            text=transcript,
-            locale=locale,
-            api_key=diagvoice_api_key,
-        )
-        if val_body.get("meaningful") is False:
-            raise WellnessChatError(
-                "Kayıt net anlaşılamadı. Lütfen tekrar deneyin.",
-                status_code=400,
+        if VOICE_LLM_VALIDATION:
+            # İsteğe bağlı sıkı kontrol (varsayılan kapalı): "Evet", "Tamam" gibi kısa cevapları da reddedebilir.
+            val_body = await _call_validate_transcript(
+                client,
+                validate_url,
+                text=transcript,
+                locale=locale,
+                api_key=diagvoice_api_key,
             )
+            if val_body.get("meaningful") is False:
+                raise WellnessChatError(
+                    "Kayıt net anlaşılamadı. Lütfen tekrar deneyin.",
+                    status_code=400,
+                )
 
-        mf_summary = _summarize_mental_fitness(mf_body)
+        mf_summary, mf_status = await _await_mental_fitness(mf_task, VOICE_MF_GRACE_SEC)
+        mf_ms = (time.perf_counter() - t0) * 1000
         voice_context = WELLNESS_VOICE_CONTEXT_TEMPLATE.format(
             transcript=transcript,
             mental_fitness_summary=mf_summary,
@@ -689,11 +761,19 @@ async def handle_wellness_chat_voice(
             config=config,
         )
         audit["transcript_len"] = len(transcript)
+        audit["mental_fitness"] = mf_status
+        audit["timings_ms"] = {
+            "stt": round(stt_ms),
+            "until_llm": round(mf_ms),
+            "total": round((time.perf_counter() - t0) * 1000),
+        }
         if locale:
             audit["locale"] = locale
         if session_id:
             audit["session_id"] = session_id
         return content, transcript, audit
     finally:
+        if mf_task is not None and not mf_task.done():
+            mf_task.cancel()
         if owns_client:
             await client.aclose()

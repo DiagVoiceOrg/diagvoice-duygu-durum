@@ -130,3 +130,86 @@ def test_model_allowlist(monkeypatch):
     monkeypatch.setenv("WELLNESS_ALLOWED_MODELS", "gpt-4o, gpt-pahali")
     _, audit, sent = _run_chat(monkeypatch, {"model": "gpt-pahali"})
     assert sent[0]["model"] == "gpt-pahali" and audit["model"] == "gpt-pahali"
+
+
+# ----------------------------------------------------------------------------- sesli sohbet
+@pytest.mark.parametrize("text", ["Evet", "Tamam", "Teşekkür ederim", "Bilmiyorum ya", "Aynen öyle", "Hayır pek değil"])
+def test_short_chat_replies_are_accepted(text):
+    assert S.chat_transcript_rejection(text) is None
+
+
+@pytest.mark.parametrize("text,reason", [
+    ("", "empty"), ("   ", "empty"), ("... 123", "no_letters"),
+    ("Altyazı M.K.", "stt_hallucination"), ("İzlediğiniz için teşekkürler.", "stt_hallucination"),
+    ("THANK YOU FOR WATCHING", "stt_hallucination"),
+    ("çay yok " * 20, "repetition"),
+])
+def test_broken_transcripts_are_rejected(text, reason):
+    assert S.chat_transcript_rejection(text) == reason
+
+
+def _run_voice(monkeypatch, *, transcript="Evet", mf_delay=0.0, mf_status=200, grace=None):
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://llm.test/v1")
+    if grace is not None:
+        monkeypatch.setattr(S, "VOICE_MF_GRACE_SEC", grace)
+    calls: list[str] = []
+    sent: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        calls.append(path)
+        if path.endswith("/chat/completions"):
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Anladım."}}]})
+        if "validate-transcript" in path:
+            return httpx.Response(200, json={"meaningful": False})
+        if "mental-fitness" in path:
+            await asyncio.sleep(mf_delay)
+            if mf_status != 200:
+                return httpx.Response(mf_status, json={"detail": "boom"})
+            return httpx.Response(200, json={"pred_label": "healthy", "mental_fitness_score": 80.0})
+        return httpx.Response(200, json={"text": transcript})  # STT
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            return await S.handle_wellness_chat_voice(
+                audio_bytes=b"x" * 100, filename="a.m4a", content_type="audio/mp4", messages=[],
+                client_ip="apikey:test", http_client=c)
+
+    import time as _t
+    t = _t.perf_counter()
+    content, tr, audit = asyncio.run(go())
+    return content, tr, audit, sent, calls, _t.perf_counter() - t
+
+
+def test_voice_short_reply_passes_without_llm_validation(monkeypatch):
+    content, tr, audit, sent, calls, _ = _run_voice(monkeypatch, transcript="Evet")
+    assert content == "Anladım." and tr == "Evet"
+    assert not any("validate-transcript" in p for p in calls)      # LLM doğrulaması çağrılmıyor
+    assert audit["mental_fitness"] == "ok"
+    assert "healthy" in sent[0]["messages"][0]["content"]          # analiz özeti bağlamda
+
+
+def test_voice_does_not_wait_for_slow_mental_fitness(monkeypatch):
+    content, _, audit, sent, _, elapsed = _run_voice(monkeypatch, mf_delay=3.0, grace=0.2)
+    assert content == "Anladım." and audit["mental_fitness"] == "timeout"
+    assert elapsed < 2.0
+    assert S.MF_UNAVAILABLE_SUMMARY in sent[0]["messages"][0]["content"]
+
+
+def test_voice_mental_fitness_error_does_not_fail_chat(monkeypatch):
+    content, _, audit, _, _, _ = _run_voice(monkeypatch, mf_status=500)
+    assert content == "Anladım." and audit["mental_fitness"] == "error"
+
+
+def test_voice_hallucinated_transcript_rejected(monkeypatch):
+    with pytest.raises(S.WellnessChatError) as e:
+        _run_voice(monkeypatch, transcript="Altyazı M.K.")
+    assert e.value.status_code == 400
+
+
+def test_voice_strict_llm_validation_can_be_enabled(monkeypatch):
+    monkeypatch.setattr(S, "VOICE_LLM_VALIDATION", True)
+    with pytest.raises(S.WellnessChatError):
+        _run_voice(monkeypatch, transcript="Evet")
